@@ -2,7 +2,7 @@
 
 ## 概述
 
-本文档定义 Argo 的五个核心模块及其协作关系。Argo 整体是一个极简 AI Agent 运行基座，五个模块各自独立、通过明确接口契约协作，任一模块可替换实现而不影响其余模块。
+本文档定义 Argo 的六个核心模块及其协作关系。Argo 整体是一个极简 AI Agent 运行基座，六个模块各自独立、通过明确接口契约协作，任一模块可替换实现而不影响其余模块。
 
 ## 模块清单
 
@@ -15,8 +15,14 @@
 ### helm — 核心 Agent 循环
 
 - **职责**：执行 "用户输入 → 模型调用 → 工具执行 → 结果返回 → 循环" 的 Agent 主循环。管理单次会话的上下文窗口、工具调用决策和 Skill 行为约束的执行
-- **消费**：deck 的工具注册表、vault 的长期记忆检索、keychain 的模型实例、talents 的 Skill 定义
+- **消费**：deck 的工具注册表、reef 的消息裁剪、vault 的长期记忆检索、sail 的模型实例、talents 的 Skill 定义
 - **产出**：会话状态（SessionState），包含消息历史、工具调用记录、当前上下文
+
+### reef — 会话上下文压缩
+
+- **职责**：当会话消息历史的 token 数接近 context window 上限时，裁剪或摘要旧消息，防止 API 拒绝请求（413 prompt too long）。只管理会话内的上下文长度，不涉及跨会话的记忆存储
+- **消费**：无（独立压缩模块）
+- **产出**：消息裁剪/摘要接口，供 helm 在每轮 LLM 调用前执行
 
 ### vault — 长期记忆管理
 
@@ -24,7 +30,7 @@
 - **消费**：无（独立存储模块）
 - **产出**：记忆存取接口（MemoryStore），供 helm 在会话开始时加载相关记忆、会话结束时写入新记忆
 
-### keychain — API 管理
+### sail — API 管理
 
 - **职责**：多模型 API 的配置存储、API Key 安全管理、模型实例的统一创建和调用路由。屏蔽不同模型供应商的 API 差异
 - **消费**：无（独立配置模块）
@@ -45,6 +51,14 @@
 - 工具来源分为两类：CLI 本地工具（通过 exec 调用）和 MCP 协议工具（通过 MCP client 调用），deck 对上屏蔽来源差异
 - 工具调用为同步阻塞模式，调用结果以字符串形式返回给 helm 注入上下文
 
+### Compact 协议
+
+- 由 reef 定义，helm 消费
+- 接口：`Compact(messages []Message, window TokenLimit) ([]Message, error)`
+- 输入：当前消息历史 + 模型的 context window 上限
+- 输出：裁剪后的消息历史（保留 system prompt + 最近 N 轮，最早的消息被截断或摘要替换）
+- reef 的具体压缩策略（截断 / 摘要 / 折叠）是内部实现，helm 不感知
+
 ### Memory 协议
 
 - 由 vault 定义，helm 消费
@@ -55,11 +69,11 @@
 
 ### Model 协议
 
-- 由 keychain 定义，helm 消费
+- 由 sail 定义，helm 消费
 - 统一调用接口：`Chat(messages []Message, tools []ToolDef, options ChatOptions) (*ChatResponse, error)`
 - ChatOptions SHALL 支持：model 选择、temperature、max_tokens
 - ChatResponse SHALL 包含：文本回复、工具调用请求列表（如有）、token 用量
-- keychain 屏蔽 OpenAI / Anthropic / DeepSeek 等不同 API 的差异，对 helm 暴露一致的调用面
+- sail 屏蔽 OpenAI / Anthropic / DeepSeek 等不同 API 的差异，对 helm 暴露一致的调用面
 
 ### Skill 协议
 
@@ -81,18 +95,19 @@
           │   ┌──────────────────────────────┐   │
           │   │  输入 → 思考 → 工具调用 → 输出  │   │
           │   └──────────────────────────────┘   │
-          └───┬───────┬──────────┬────────┬──────┘
-              │       │          │        │
-              ▼       ▼          ▼        ▼
-          ┌──────┐ ┌──────┐ ┌──────┐ ┌────────┐
-          │ deck │ │vault │ │keychain│ │talents │
-          │ 工具  │ │ 记忆  │ │ 模型  │ │  技能   │
-          └──────┘ └──────┘ └──────┘ └────────┘
+          └───┬──────┬──────┬──────┬──────┬──────┘
+              │      │      │      │      │
+              ▼      ▼      ▼      ▼      ▼
+          ┌──────┐┌──────┐┌──────┐┌──────┐┌────────┐
+          │ deck ││ reef ││vault ││sail││talents │
+          │ 工具  ││ 压缩  ││ 记忆  ││ 模型  ││  技能   │
+          └──────┘└──────┘└──────┘└──────┘└────────┘
 
 数据流（箭头方向 = 数据消费方向）：
   helm ← deck     : 查询可用工具列表 → 发起工具调用 → 接收调用结果
+  helm ← reef     : 每轮 LLM 调用前，裁剪消息历史以防 context window 溢出
   helm ← vault    : 会话开始时检索相关记忆 → 会话结束时写入新记忆
-  helm ← keychain : 获取模型实例 → 发送 Chat 请求 → 接收模型响应
+  helm ← sail : 获取模型实例 → 发送 Chat 请求 → 接收模型响应
   helm ← talents  : 会话开始时加载 Skill → 注入 system prompt
 ```
 

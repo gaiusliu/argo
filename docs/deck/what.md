@@ -9,7 +9,7 @@ deck 负责工具的注册、可用性判定、发现、使用和结果后处理
 ### 内部工具
 
 ```
-init() + barrel 自注册 → 编译时嵌入 → ToolRegistry
+init() + [barrel 触发](../glossary.md#barrel-触发) 自注册 → 编译时嵌入 → ToolRegistry
 ```
 
 ### 外部 CLI 工具
@@ -72,20 +72,26 @@ CLI 和 MCP 之间不造中间层。CLI 做不了权限管理但省 token，MCP 
 ### 能力 1：工具注册
 
 ```
-工具来源
-  ├── 内部工具 → init() 自注册 + barrel 触发 → 编译时嵌入
-  │              Conditions 不写则默认永远可见
+Argo 启动时，三来源各自完成注册，全部写入统一 ToolRegistry：
+
+  ┌─── 内部工具
+  │     argo/deck/tools/ 下各 Go 包通过 init() 自注册
+  │     barrel 文件 import 触发所有 init()
+  │     → ToolDef 由开发者手写，Conditions 为空（编译时保证存在）
   │
-  ├── 外部 CLI  → 读 tools.json → 构造 ToolDef + 自动生成 Conditions
-  │              [{ "name": "gh", "description": "..." }]
-  │              → Conditions: [{Kind:"binary", Key:"gh"}]  // 自动生成
-  │              → execute: 通用 exec.Command 适配器
+  ├─── 外部 CLI
+  │     LoadConfig() 读 ~/.argo/tools.json 的 cli 列表
+  │     对每条 "{ name, description }" 构造 ToolDef
+  │     Conditions 自动生成 [{Kind:"binary", Key: name}]
+  │     execute 自动生成为通用 exec.Command 适配器
   │
-  └── MCP 工具 → 读 tools.json → spawn 子进程 → tools/list → 构造 ToolDef
-                 Conditions 不写，可用性由 MCPManager.IsAlive() 判定
-                    │
-                    ▼
-              写入 ToolRegistry（按名称索引，内部 > MCP 同名优先）
+  └─── MCP
+        LoadConfig() 读 ~/.argo/tools.json 的 mcp 列表
+        对每条 "{ name, command }" spawn 子进程
+        tools/list 协议获取工具清单 → 逐个构造 ToolDef
+        Conditions 不写，可用性由 MCPManager.IsAlive() 判定
+
+同名冲突：内部 > 外部。CLI 和 MCP 平权——启动时报错，不做静默覆盖。
 ```
 
 ### 能力 2：可用性判定
@@ -123,46 +129,80 @@ MCP 子进程存活检测：cmd.Wait() + 后台 goroutine
 ### 能力 3：工具发现
 
 ```
-ToolRegistry.list(agent, model)
+ToolRegistry.list(agentCfg)
   │
-  ├── 滤除 hidden 工具
-  ├── 按 agent 权限二次过滤
+  ├── Step 1: 可用性滤除
+  │     去掉所有 visible=false 的条目
+  │
+  ├── Step 2: 权限滤除
+  │     按 agentCfg 去掉不允许的工具（MVP 先全量放行，留 hook）
   │
   ▼
-  输出 ToolDef[]（name + description + JSON Schema）
-    → helm 注入 system prompt
+  Step 3: 排序输出
+     按名称排序（保证缓存稳定性）
+     → ToolDef[] → helm 注入 system prompt
 ```
 
+> `agentCfg` 是尚未定义的占位符，预留用于多 Agent 场景下不同 Agent 拥有不同工具权限。MVP 只有一个 Agent 实例，`List()` 实际调用无需参数，该 hook 暂不生效。
+
+同名冲突：内部 > CLI（注册阶段报错）。CLI 和 MCP 平权——用户自己配置的信任级别相同，同名冲突启动时报错让用户解决。不做静默覆盖。
+
 ### 能力 4：工具使用
+
+不做独立参数校验步骤。内部/MCP 工具的 schema 校验由工具 handler 内部自行处理，外部 CLI 工具无法预先校验。所有错误——类型错误、参数错误、业务错误——统一走 ToolResult.Status="error" 返回，由 LLM 解读并自我修正。
+
+分区：每个工具声明静态 `ConcurrencyMode`（concurrent | sequential）。读操作为 concurrent（不修改状态），写操作为 sequential（避免并发踩踏）。工具作者预设，不做运行时判断。
 
 ```
 LLM 返回 tool_use 块
   │
-  ├── 名称查找（精确匹配）
-  ├── 参数校验（JSON Schema 验证）
-  ├── 权限检查（MCP 可做；CLI 做完事日志审计，不做事前拦截）
+  ├── 名称查找
+  │     精确匹配 ToolRegistry
+  │     未找到 → ToolResult{Status:"error", Output:"未知工具: xxx"}
   │
-  ├── 分区执行：
-  │     ├── 并发安全工具 → 并行执行（上限 N）
-  │     └── 非并发安全工具 → 串行执行
+  ├── 权限检查
+  │     PreToolUse hook（可阻断）
+  │     阻断 → ToolResult{Status:"error", Output:"工具 xxx 未被允许"}
   │
-  ├── 执行调度：
-  │     ├── 内部工具 → Go 函数调用
-  │     ├── 外部 CLI  → exec.Command
-  │     └── MCP 工具 → MCP client.(tools/call)
+  ├── 分区
+  │     按 ConcurrencyMode 拆组：
+  │       ├── concurrent → 并行组（goroutine + sync.WaitGroup）
+  │       └── sequential  → 串行组（for 逐个执行）
+  │
+  ├── 执行调度
+  │     ├── builtin → ref.Builtin(ctx, params)
+  │     ├── cli     → exec.Command(binary, args...)
+  │     └── mcp     → mcpManager.CallTool(server, tool, params)
   │
   ▼
-  返回 ToolResult（输出 + 状态 + 元数据）
+  工具返回 (stdout + stderr + exit_code)
+    │
+    ▼
+  包装为 ToolResult
+    ├── Status: "success" | "error" | "timeout"
+    ├── Output: stdout（成功时）| stderr（失败时，原样交给 LLM 自行修正）
+    └── Metadata: exit_code, duration
+    │
+    ▼
+  注入会话上下文 → helm 下一轮 → LLM 看到错误自行调整
 ```
 
 ### 能力 5：结果后处理
 
+MVP 保留头 40% + 尾 60%。不做持久化文件、不做聚合预算。
+
 ```
 ToolResult
   │
-  ├── 截断：超长输出按 token 预算裁剪
-  ├── 格式化：统一包装为 LLM 可消费的消息结构
-  ├── 错误转换：异常/堆栈 → LLM 可理解的错误描述
+  ├── 截断（单工具字符上限 MaxOutputChars，默认 50K，可配置）
+  │     if len(Output) > MaxOutputChars:
+  │       head = Output[:MaxOutputChars * 40%]
+  │       tail = Output[末尾 MaxOutputChars * 60%]
+  │       mid_omitted = 原始长度 - MaxOutputChars
+  │       Output = head + "\n\n[... 输出被截断，省略 mid_omitted 字符 ...]\n\n" + tail
+  │
+  ├── 错误格式化
+  │     exit_code ≠ 0 → 包装 stderr 为统一 ToolResult，原样交给 LLM
   │
   ▼
   注入会话上下文 → helm 进入下一轮
@@ -170,7 +210,7 @@ ToolResult
 
 ## 边界情况
 
-- 工具重名：内部工具 > CLI 工具 > MCP 工具
+- 工具重名：内部 > 外部。CLI 和 MCP 同名冲突启动报错，不做静默覆盖
 - MCP 服务器断连：标记该服务器所有工具为 hidden，定时重连
 - MCP 服务器启动失败：记录诊断信息，该服务器工具不加入注册表
 - 工具执行超时：按工具自身 timeout 配置终止，返回超时错误

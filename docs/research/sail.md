@@ -1,4 +1,4 @@
-# LLM API 管理（keychain）设计调研
+# LLM API 管理（sail）设计调研
 
 > 调研对象：Claude-Code、OpenCode、Hermes Agent、CrewAI、OpenClaw、Nanoclaw、pi
 
@@ -431,4 +431,4 @@ createLazyStream(loadModule) → 第一次调用时 import → 转发事件流
 4. **懒加载 Provider**是正确选择：pi 的 `createLazyStream` 确保不在启动时加载所有 Provider 模块
 5. **错误应编码为流事件而非抛异常**：pi 的"不抛出"合约对 Agent 循环的健壮性至关重要
 6. **MVP 阶段只需 3 个 Provider**：Anthropic + OpenAI + OpenAI-Compatible（覆盖 90% 模型）
-7. **每个 Agent 实例可能用不同模型**：Argo 的 keychain 应该支持 Agent 级别的模型绑定
+7. **每个 Agent 实例可能用不同模型**：Argo 的 sail 应该支持 Agent 级别的模型绑定
