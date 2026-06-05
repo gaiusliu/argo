@@ -20,34 +20,38 @@ helm/
 ```go
 // HelmDeps — helm 消费的外部接口
 type HelmDeps struct {
-    Deck     ToolProvider
-    Reef     CompactProvider
-    Vault    MemoryProvider
-    Sail ModelProvider
-    Talents  SkillProvider
+    Tools     Tools
+    Compactor Compactor
+    Memory    Memory
+    LLM       LLM
+    Skills    Skills
 }
 
-type ToolProvider interface {
+// 以下接口由 helm（消费者）定义，各模块包提供实现
+
+type Tools interface {
     List(ctx context.Context) []ToolDef
     ExecuteBatch(ctx context.Context, calls []ToolCall) []ToolResult
     Lookup(ctx context.Context, name string) (ToolDef, bool)
 }
 
-type CompactProvider interface {
+type Compactor interface {
     Compact(ctx context.Context, messages []Message, window TokenLimit) ([]Message, error)
 }
 
-type MemoryProvider interface {
+type Memory interface {
     Recall(ctx context.Context, query string) (*MemoryEntry, error)
     Store(ctx context.Context, content string) error
 }
 
-type ModelProvider interface {
-    Chat(ctx context.Context, req ModelRequest) (<-chan Event, error)
+type LLM interface {
+    Chat(ctx context.Context, req ChatRequest) (<-chan Event, error)
+    Window() TokenLimit
 }
 
-type SkillProvider interface {
-    ActiveInstructions(ctx context.Context) string
+type Skills interface {
+    List(ctx context.Context) []SkillInfo
+    Instructions(ctx context.Context, name string) string
 }
 
 // TurnState — 调用方持有，每轮传入传出
@@ -89,6 +93,7 @@ type TokenLimit struct {
 ```go
 // runLoop — 核心循环。返回 event channel，调用方 for range 消费
 // state 由调用方初始化并传入（包含首次 user message），循环结束后 state 被更新为最终状态
+// 每轮结束后调用 deps.Vault 写入新增消息（格式见 ../vault/transcript.md）
 func runLoop(ctx context.Context, deps HelmDeps, state *TurnState) (<-chan Event, error)
 
 // buildSystemPrompt — helm 主动向各模块索取信息，拼装 system prompt
@@ -106,7 +111,7 @@ func runLoop(ctx context.Context, deps HelmDeps, state *TurnState) (<-chan Event
         defer close(out)
 
         // 会话级缓存：system prompt + tools 只构建一次，跨轮次复用
-        tools := deps.Deck.List(ctx)
+        tools := deps.Tools.List(ctx)
         state.SystemPrompt = buildSystemPrompt(ctx, deps, tools)
 
         for {
@@ -150,8 +155,8 @@ func runLoop(ctx context.Context, deps HelmDeps, state *TurnState) (<-chan Event
 
             // 7. 执行工具，原地填充 Result
             for i := range toolUses {
-                def, _ := deps.Deck.Lookup(ctx, toolUses[i].Name)
-                result := deps.Deck.Execute(ctx, def, toolUses[i].Parameters)
+                def, _ := deps.Tools.Lookup(ctx, toolUses[i].Name)
+                result := deps.Tools.Execute(ctx, def, toolUses[i].Parameters)
                 toolUses[i].Result = &result
                 out <- Event{Type: "tool_use", ToolUse: &toolUses[i]} // 同一 ID，Result 已填
             }
@@ -178,14 +183,14 @@ func runLoop(ctx context.Context, deps HelmDeps, state *TurnState) (<-chan Event
 runLoop(ctx, deps, &state)
   │
   ├─ 会话级缓存（循环前执行一次，跨轮次复用）:
-  │     ├─ deps.Deck.List()        → tools
+  │     ├─ deps.Tools.List()        → tools
   │     └─ buildSystemPrompt(): talents + vault + tools → system prompt
   ├─ deps.Reef.Compact()     → 裁剪消息历史
   ├─ deps.Sail.Chat()    → <-chan Event（流式转发给调用方）
   │     ├─ [每轮] Event.text_delta → 调用方展示逐 token
   │     ├─ [有工具] Event.tool_use → 调用方展示工具调用及结果
   │     └─ Event.done         → 最终文本 + token 用量
-  ├─ deps.Deck.ExecuteBatch() → 工具执行
+  ├─ deps.Tools.ExecuteBatch() → 工具执行
   ├─ deps.Vault.Store()      → fire-and-forget 写入记忆
   │
   ▼

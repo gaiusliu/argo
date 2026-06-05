@@ -24,3 +24,16 @@ import _ "argo/deck/tools"  // 触发 barrel → 触发所有子包 init()
 名称来自 JS/TS 社区 "barrel export" 概念（index.ts 只做 re-export），Go 中用匿名导入达到相同"聚合触发"效果。
 
 ---
+
+## 无限压缩循环
+
+上下文长度超阈值 → 触发压缩 → 压缩后 token 数仍超阈值 → 再次触发压缩 → 仍超阈值 → …… 如此反复，每次压缩消耗一次 LLM 调用（生成摘要），但节省的 token 还抵不上这次调用的开销。
+
+类比：用水舀舀船舱里的水，但水舀本身漏得更多——每次舀出去 100ml，水舀的破洞又漏回来 120ml。
+
+防止手段——反抖动/断路器：
+- Claude-Code：连续 3 次压缩后放弃（`MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3`）
+- Hermes Agent：连续 2 次压缩节省率 < 10% 则跳过后续压缩
+- OpenClaw：最大溢出压缩尝试次数上限
+
+---

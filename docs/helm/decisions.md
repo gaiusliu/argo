@@ -73,3 +73,4 @@
 **决策**：每轮 LLM 调用前，helm 将消息历史交给 `deps.Reef.Compact()`，用裁剪后的结果调用 LLM。reef 为 nil 则跳过（无裁剪）。
 
 **原因**：helm 不感知上下文是否溢出——那是 reef 的判断逻辑。helm 只管把消息传进去，reef 决定剪不剪。
+

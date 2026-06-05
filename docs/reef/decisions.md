@@ -2,19 +2,6 @@
 
 ---
 
-## DEC-R01：会话历史写入方式
-
-**日期**：2026-06-04
-**状态**：已决定
-
-**决策**：同步追加 JSONL。每轮对话结束后 `f.WriteString(line + "\n")`，不阻塞主循环，不引入异步 buffer/flush 复杂度。
-
-**拒绝**：异步写入——需管理 buffer、flush 时机、压缩前完整性检查，MVP 不值得。
-
-**参考**：pi 的 JSONL 追加模式，O(1) 磁盘操作。
-
----
-
 ## DEC-R02：压缩摘要结构由 SKILL.md 定义
 
 **日期**：2026-06-04
@@ -28,46 +15,9 @@
 2. Anthropic 的 agentskills.io 已经是行业标准方向，Context-Reset-Planner skill 已有先例
 3. 用户可通过修改 SKILL.md 定制摘要内容，不需重新编译 Argo
 
-**实现方式**：
+**实现方式**：见 [compact-template.md](compact-template.md)。SKILL.md 定义 5 字段模板（Active Task / Progress / Key Decisions / Constraints / Critical Context），reef 代码只做流程骨架不碰模板内容。
 
-```markdown
-<!-- reef/compact-template/SKILL.md -->
----
-name: compact-template
-description: 会话上下文压缩的摘要结构要求
----
-
-## 摘要结构
-
-生成摘要时，必须保留以下信息并确保语义不变：
-
-### 明确要求
-当前会话中用户提出的一切显式约束和要求
-
-### 关键决策
-已做出的重要决策及原因，含引用依据
-
-### 进度概览
-已完成 / 进行中 / 阻塞
-
-### 下一步
-待执行的操作和依赖关系
-
-## 用户画像
-
-以下信息不应留在摘要中，发现后交给 vault 长期持久化：
-- 工具偏好、回答偏好、语言风格偏好
-- 用户的知识水平、角色信息
-
-## 丢弃规则
-
-以下内容可直接丢弃，不保留：
-- 最终决策的中间态推理
-- 未被后续引用的工具结果
-- 纯聊天/闲聊轮次
-```
-
-**拒绝**：硬编码 pi 的六字段模板（Goal/Constraints/Progress/Key Decisions/Next Steps/Critical Context）——不灵活，不同场景的摘要需求不同。
+**拒绝**：硬编码模板——不灵活，不同场景的摘要需求不同。叩问的教练会话需要"学习进度/混淆点"，Vug 的技术开采需要"已发现概念/已建卡片"。
 
 ---
 
@@ -76,6 +26,30 @@ description: 会话上下文压缩的摘要结构要求
 **日期**：2026-06-04
 **状态**：已决定
 
-**决策**：reef 压缩完成后，不自动注入文件路径预览。LLM 如需要更多上下文，通过内置 Read 工具按需读取 JSONL 文件。待 deck 开发完成后实现 Read 工具时再具体设计，当下仅记录此决定。
+**决策**：reef 压缩完成后，不自动注入文件路径预览。LLM 如需要更多上下文，通过内置 Read 工具按需读取 vault 管理的 [transcript.jsonl](../vault/transcript.md)。待 deck 开发完成后实现 Read 工具时再具体设计，当下仅记录此决定。
 
 **拒绝**：Claude-Code 的 `<persisted-output>` 自动注入——每次都带文件路径和 2KB 预览增加 token 消耗，MVP 让 LLM 主动决定是否回查更经济。
+
+---
+
+## DEC-R04：摘要模板设计——5 字段通用模板
+
+**日期**：2026-06-05
+**状态**：已决定
+
+**决策**：Argo 作为通用 Agent 框架（非编程专用），摘要模板为 5 字段：Active Task（逐字引用）+ Progress（Done/InProgress/Blocked）+ Key Decisions + Constraints + Critical Context。
+
+**去掉的编程特有字段**：Files and Code Sections、Relevant Files、Active State、Completed Actions、Errors and fixes。
+
+**合并的冗余字段**：Resolved/Pending Questions 归入 Progress，Goal 与 Active Task 合并，Remaining Work 归入 Progress.Blocked。
+
+**设计原则**：
+
+| 原则 | 来源 | 说明 |
+|------|------|------|
+| Active Task 逐字引用 | pi/Hermes | 唯一不允许改写的字段 |
+| 空段保留 "(none)" | OpenCode | 保证结构一致性 |
+| SUMMARY_PREFIX | Hermes | `[CONTEXT COMPACTION -- REFERENCE ONLY]` 防混淆 |
+| 不包含文件/工具记录 | Argo | 原文在 vault 的 transcript.jsonl 中可按需回溯 |
+
+**拒绝**：13 字段完整模板（pi/Hermes）——字段量对小型压缩模型输出不稳定，且多数字段为编程专用。

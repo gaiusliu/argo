@@ -1,4 +1,4 @@
-# Agent 核心循环（engine / helm）设计调研
+# Agent 核心循环（helm）设计调研
 
 > 调研对象：Claude-Code、OpenCode、Hermes Agent、CrewAI、OpenClaw、Nanoclaw、pi
 
