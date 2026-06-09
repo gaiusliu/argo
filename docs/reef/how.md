@@ -77,7 +77,7 @@ helm 调用 Compact(messages, window)
   │     → head（旧消息，进压缩）+ tail（最近消息，完整保留）
   │
   ├── 3. buildCompactPrompt()
-  │     deps.Talents.Load("reef-compact") → 摘要模板
+  │     deps.Crew.Load("reef-compact") → 摘要模板
   │     拼接：head 消息 + 模板 → 完整 prompt
   │
   ├── 4. deps.Sail.Chat()（优先默认模型，失败重试，最后兜底备用模型）

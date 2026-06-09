@@ -15,7 +15,7 @@
 ### helm — 核心 Agent 循环
 
 - **职责**：执行 "用户输入 → 模型调用 → 工具执行 → 结果返回 → 循环" 的 Agent 主循环。管理单次会话的上下文窗口、工具调用决策和 Skill 行为约束的执行
-- **消费**：deck 的工具注册表、reef 的消息裁剪、vault 的长期记忆检索、sail 的模型实例、talents 的 Skill 定义
+- **消费**：deck 的工具注册表、reef 的消息裁剪、vault 的长期记忆检索、sail 的模型实例、crew 的 Skill 定义
 - **产出**：会话状态（SessionState），包含消息历史、工具调用记录、当前上下文
 
 ### reef — 会话上下文压缩
@@ -36,7 +36,7 @@
 - **消费**：无（独立配置模块）
 - **产出**：LLM 调用接口，供 helm 获取可调用的模型客户端
 
-### talents — Skill 库
+### crew — Skill 库
 
 - **职责**：Skill（Markdown 流程定义文件）的加载、校验和执行调度。Skill 定义了 Agent 在特定场景下的行为约束和交互流程
 - **消费**：无（Skill 内容由上层应用提供）
@@ -77,7 +77,7 @@
 
 ### Skill 协议
 
-- 由 talents 定义，helm 消费
+- 由 crew 定义，helm 消费
 - Skill MUST 为 Markdown 文件，包含以下字段：触发条件（when to activate）、行为约束（what the agent SHALL/SHALL NOT do）、退出标准（when to end）
 - helm 在会话初始化时加载指定 Skill，将其行为约束注入 system prompt
 - Skill 之间互斥：同一会话 SHALL 只激活一个 Skill
@@ -99,7 +99,7 @@
               │      │      │      │      │
               ▼      ▼      ▼      ▼      ▼
           ┌──────┐┌──────┐┌──────┐┌──────┐┌────────┐
-          │ deck ││ reef ││vault ││sail││talents │
+          │ deck ││ reef ││vault ││sail││crew │
           │ 工具  ││ 压缩  ││ 记忆  ││ 模型  ││  技能   │
           └──────┘└──────┘└──────┘└──────┘└────────┘
 
@@ -108,7 +108,7 @@
   helm ← reef     : 每轮 LLM 调用前，裁剪消息历史以防 context window 溢出
   helm ← vault    : 会话开始时检索长期记忆 + 每轮结束后写入对话记录
   helm ← sail     : 获取模型实例 → 发送 Chat 请求 → 接收模型响应
-  helm ← talents  : 会话开始时加载 Skill → 注入 system prompt
+  helm ← crew  : 会话开始时加载 Skill → 注入 system prompt
 ```
 
 ## 产品形态

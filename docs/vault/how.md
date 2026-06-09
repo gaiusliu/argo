@@ -2,17 +2,17 @@
 
 ## 概述
 
-vault 是 Argo 的统一存储层，提供 `Memory` 接口的默认文件系统实现。两层职责：会话级 transcript.jsonl + 框架级 profile.md / rules.md。支持通过注册表切换后端。
+vault 是 Argo 的统一存储层，提供 `Memory` 接口的默认文件系统实现。两层职责：会话级 transcript.jsonl + 框架级 profile.md / rules.md。通过包级 `Register` / `Load` 函数支持 Memory 实现的热插拔。
 
 ## 内部结构
 
 ```
 vault/
-├── vault.go        // Memory 接口 + BackendRegistry 后端注册表
+├── vault.go        // Memory 接口 + Register / Load 包级函数
 ├── file.go         // FileVault 默认文件系统实现
 ├── transcript.go   // transcript.jsonl 追加写入
 ├── profile.go      // profile.md / rules.md 读写 + 预算控制
-├── types.go        // MemoryEntry, BackendRegistry
+├── types.go        // MemoryEntry, RecallResult
 └── vault_test.go
 ```
 
@@ -37,10 +37,19 @@ type RecallResult struct {
     Rules   string // rules.md 全文
 }
 
-// BackendRegistry — 支持自定义后端热插拔
-type BackendRegistry struct { ... }
+// 包级函数 — 管理 Memory 实现的热插拔
+// 不暴露额外类型，vault. 前缀已在语义上约束了"记忆存储注册"的领域
 func Register(name string, factory func(cfg Config) (Memory, error))
 func Load(name string, cfg Config) (Memory, error)
+```
+
+调用方示例：
+
+```go
+vault.Register("file", func(cfg vault.Config) (vault.Memory, error) {
+    return NewFileVault(cfg.SessionDir)
+})
+mem, err := vault.Load("file", cfg)
 ```
 
 ## 函数签名
@@ -62,7 +71,7 @@ func budgetCheck(path string, maxChars int) bool
 
 ```
 启动时:
-  vault.LoadBackend(agent.cfg.MemoryBackend) → Memory 实例
+  vault.Load(agent.cfg.MemoryBackend, cfg) → Memory 实例
 
 每轮结束后（helm 调）:
   vault.Append(newMessages)

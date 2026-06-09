@@ -63,3 +63,22 @@
 **状态**：已决定
 
 **决策**：reef 压缩时从 helm 的内存中读取消息，不从 vault 读 transcript 文件。数据流是单向的：helm → reef → helm → vault。reef 和 vault 之间没有调用关系。
+
+---
+
+## DEC-V06：对话记录序列号由 vault 管理
+
+**日期**：2026-06-09
+**状态**：已决定
+
+**决策**：transcript.jsonl 中每条消息携带 `seq` 字段（session 级自增整数）。vault 内部维护计数器，每次 `Append()` 时为每条消息分配 seq。helm 不感知 seq 的存在。
+
+**格式**（见 [transcript.md](transcript.md)）：
+
+```jsonl
+{"role":"user","content":"帮我查 main.go","seq":1,"timestamp":"..."}
+{"role":"assistant","content":null,"tool_calls":[...],"seq":2,"timestamp":"..."}
+{"role":"tool","tool_call_id":"call_001","content":"...","seq":3,"timestamp":"..."}
+```
+
+seq 用于 reef 摘要中的原文引用定位（`[seq:401-435]`）和 Read 工具的行号精确定位。

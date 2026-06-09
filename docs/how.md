@@ -2,12 +2,12 @@
 
 ## 概述
 
-Argo 是一个用 Go 实现的极简 AI Agent 框架。六个模块 (deck/helm/reef/vault/sail/talents) 通过接口注入协作，同一份核心代码编译为 CLI 和 Gateway 两种运行模式。
+Argo 是一个用 Go 实现的极简 AI Agent 框架。六个模块 (deck/helm/reef/vault/sail/crew) 通过接口注入协作，同一份核心代码编译为 CLI 和 Gateway 两种运行模式。
 
 ## 技术栈
 
 - **语言**：Go
-- **六个模块**：deck (工具)、helm (循环)、reef (压缩)、vault (存储)、sail (模型)、talents (技能)
+- **六个模块**：deck (工具)、helm (循环)、reef (压缩)、vault (存储)、sail (模型)、crew (技能)
 - **双入口**：`argo run` (CLI) / `argo serve` (Gateway)，共享同一核心代码
 - **状态持有**：调用方持有会话状态，helm 是纯函数
 
@@ -20,7 +20,7 @@ Argo 是一个用 Go 实现的极简 AI Agent 框架。六个模块 (deck/helm/r
 | **reef** | 会话上下文压缩。token超限时裁剪旧消息、生成LLM摘要 | Go 代码固化流程骨架，SKILL.md 定义摘要模板 | 详细设计完成 |
 | **vault** | 对话记录持久化(transcript) + 跨会话长期记忆 | Go 文件/存储操作 | 待设计 |
 | **sail** | 多模型API管理。屏蔽Anthropic/OpenAI/DeepSeek等差异 | Go 接口 + adapter模式 | 待设计 |
-| **talents** | SKILL.md技能加载与调度。渐进式披露注入system prompt | Go 文件扫描 + SKILL.md解析 | 待设计 |
+| **crew** | SKILL.md技能加载与调度。渐进式披露注入system prompt | Go 文件扫描 + SKILL.md解析 | 详细设计完成 |
 
 ## 跨模块接口契约
 
@@ -52,7 +52,7 @@ type Memory interface {
     Store(ctx context.Context, content string) error                // 写入长期记忆
 }
 
-// Skills — talents 模块实现
+// Skills — crew 模块实现
 type Skills interface {
     List(ctx context.Context) []SkillInfo
     Instructions(ctx context.Context, name string) string
@@ -71,7 +71,7 @@ argo run / argo serve
   │               → spawn MCP 子进程 → 注册 MCP 工具
   ├── vault  初始化 → 创建/打开 session 目录
   ├── reef   就绪 → 等待 helm 调用
-  ├── talents 扫描 → 加载 ~/.argo/skills/ 下的 SKILL.md
+  ├── crew 扫描 → 加载 ~/.argo/skills/ 下的 SKILL.md
   ├── sail   就绪 → 等待 helm 调用
   │
   └── helm   就绪 → 等待用户输入
@@ -88,7 +88,7 @@ helm.runLoop()
   ├── 1. reef.Compact(messages, window)    // 裁剪消息历史（未超阈值则原样返回）
   ├── 2. deck.List()                       // 获取可用工具列表
   ├── 3. buildSystemPrompt(                // 拼装 system prompt
-  │        talents.ActiveInstructions()     //   ← talents: 当前 Skill 指令
+  │        crew.ActiveInstructions()     //   ← crew: 当前 Skill 指令
   │        vault.Recall()                   //   ← vault: 用户偏好/长期记忆
   │        tools                            //   ← deck: 工具描述
   │    )
@@ -113,7 +113,7 @@ helm.runLoop()
 ├── sessions/
 │   └── {session_id}/
 │       └── transcript.jsonl   // vault: 对话记录
-├── skills/                    // talents: SKILL.md 文件
+├── skills/                    // crew: SKILL.md 文件
 │   ├── reef-compact/
 │   │   └── SKILL.md           // reef: 压缩摘要模板
 │   └── learn/
@@ -130,6 +130,6 @@ argo/
 ├── reef/                      // 上下文压缩模块
 ├── vault/                     // 存储模块（待设计）
 ├── sail/                      // 模型管理模块（待设计）
-├── talents/                   // 技能管理模块（待设计）
+├── crew/                   // 技能管理模块（待设计）
 └── docs/                      // 设计文档
 ```
