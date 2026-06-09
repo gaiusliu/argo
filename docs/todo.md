@@ -13,8 +13,8 @@
 
 ### 模块目标
 
-- [ ] deck — 工具注册表（ToolRegistry）+ 执行器（ToolExecutor）+ 三种 Executor（builtin/CLI/MCP）+ MCPManager 子进程生命周期管理
-- [ ] vault — FileVault 默认文件系统实现、transcript.jsonl 追加写入、profile.md / rules.md 读写与预算控制
+- [ ] deck — Tool 接口 + 包级 Register/List/Lookup/ExecuteBatch、三种 Tool 实现（builtinTool/cliTool/mcpTool）、MCPManager 子进程生命周期管理、六个内置工具（bash/read/write/edit/grep/glob）
+- [ ] vault — FileVault 默认文件系统实现、transcript.jsonl 追加写入（6 种 type）、profile.md 读写与预算控制 / AGENTS.md 只读加载
 - [ ] sail — models.json 配置加载与自动生成、anthropic / openai / openai-compatible 三个 provider adapter、错误分类
 - [ ] crew — SKILL.md 文件扫描、YAML frontmatter 解析、List / Instructions 渐进式披露接口
 

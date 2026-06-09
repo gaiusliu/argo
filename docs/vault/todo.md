@@ -6,9 +6,9 @@
 
 ## 2. FileVault 文件系统实现
 - [ ] 2.1 实现 FileVault 骨架（NewFileVault + 目录创建 + Memory 接口占位）
-- [ ] 2.2 实现 Append — transcript.jsonl 同步追加写入（JSONL 格式：role / content / tool_calls / timestamp）
-- [ ] 2.3 实现 Store — profile.md / rules.md 追加写入 + badgetCheck 预算控制
-- [ ] 2.4 实现 Recall — 读取 profile.md + rules.md 全文，文件不存在时返回空值
+- [ ] 2.2 实现 Append — transcript.jsonl 同步追加写入（6 种 type：user/llm/tool/system/compact/profile）
+- [ ] 2.3 实现 Store — profile.md 追加写入 + budgetCheck 预算控制
+- [ ] 2.4 实现 Recall — 读取 profile.md + AGENTS.md 全文，文件不存在时返回空值
 
 ## 3. 会话目录管理
 - [ ] 3.1 实现会话目录创建（~/.argo/sessions/{session_id}/）与目录结构初始化

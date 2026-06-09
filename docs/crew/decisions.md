@@ -37,7 +37,7 @@
 **日期**：2026-06-09
 **状态**：已决定
 
-**决策**：crew 不做 Plugin/Extension 代码扩展。Skill 是纯 Markdown 内容，crew 只做发现、加载和按需供给。代码级扩展（注册新工具、订阅事件钩子）由 deck 的工具注册机制覆盖——第三方通过 Go 包 + barrel 注册新工具，不需要插件运行时。
+**决策**：crew 不做 Plugin/Extension 代码扩展。Skill 是纯 Markdown 内容，crew 只做发现、加载和按需供给。代码级扩展（注册新工具、订阅事件钩子）由 deck 的 `tools/builtin` 包注册机制覆盖——第三方通过 Go 包 `init()` + `deck.Register()` 注册新工具，不需要插件运行时。
 
 **拒绝**：pi 的 Extension API——需要模块加载器 + 沙箱 + 生命周期管理，MVP 不引入插件运行时。
 

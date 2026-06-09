@@ -7,13 +7,13 @@
 **日期**：2026-06-05
 **状态**：已决定
 
-**决策**：对话历史持久化是 vault 的职责。helm 每轮结束后调用 vault.Append() 写入新增消息。JSONL 同步追加，4 字段（role/content/tool_calls/tool_call_id/timestamp）。
+**决策**：对话历史持久化是 vault 的职责。helm 每轮结束后调用 vault.Append() 写入本轮产生的所有 record。JSONL 同步追加，每条 record 含 `type` 字段标识类型（user/llm/tool/system/compact/profile，共 6 种）及 `seq` 字段（session 级自增整数）。
 
 **格式**：见 [transcript.md](transcript.md)。
 
 ---
 
-## DEC-V02：长期记忆拆分为 profile.md + rules.md
+## DEC-V02：长期记忆拆分为 profile.md + AGENTS.md
 
 **日期**：2026-06-08
 **状态**：已决定
@@ -22,8 +22,8 @@
 
 | 文件 | 记什么 | 谁来写 | 淘汰策略 |
 |------|------|------|------|
-| `profile.md` | 用户画像、偏好、风格 | LLM 为主 | 5K 预算，LLM 写入时自行合并/丢弃 |
-| `rules.md` | 硬性约束、规则 | 用户 + LLM 共建 | 用户手写永不淘汰，LLM 追加可由用户审核 |
+| `profile.md` | 用户画像、偏好、风格 | LLM | 5K 预算，LLM 写入时自行合并/丢弃 |
+| `AGENTS.md` | 硬性约束、规则 | 用户 | 永不淘汰，LLM 只读 |
 
 两文件在会话开始时通过 vault.Recall() 注入 system prompt。
 
@@ -36,7 +36,7 @@
 **日期**：2026-06-08
 **状态**：已决定
 
-**决策**：vault 只负责 Agent 框架级的共享状态（profile + rules + transcript）。业务记忆（Vug 的技术概念卡片、叩问的学生混淆矩阵）由各业务的 SKILL + 专用工具自行管理。
+**决策**：vault 只负责 Agent 框架级的共享状态（profile + AGENTS + transcript）。业务记忆（Vug 的技术概念卡片、叩问的学生混淆矩阵）由各业务的 SKILL + 专用工具自行管理。
 
 **原因**：业务记忆的结构和检索方式完全由业务场景决定——概念卡片需要分类树和双向链接，混淆矩阵需要按学生 ID 和知识点查询。框架级记忆系统不可能设计一个通用的数据结构满足所有业务。
 
@@ -49,7 +49,7 @@
 **日期**：2026-06-08
 **状态**：已决定
 
-**决策**：vault 提供 Memory 接口 + BackendRegistry 注册表。默认实现为文件系统（FileVault）。Agent 配置中指定后端名称，启动时加载。切换 = 改配置 + 重启，不做数据迁移。
+**决策**：vault 提供 Memory 接口 + 包级 `Register` / `Load` 函数管理实现。默认实现为文件系统（FileVault）。Agent 配置中指定后端名称，启动时加载。切换 = 改配置 + 重启，不做数据迁移。
 
 **参考**：Hermes Agent 的 8 个 MemoryProvider 插件体系。
 
@@ -76,9 +76,34 @@
 **格式**（见 [transcript.md](transcript.md)）：
 
 ```jsonl
-{"role":"user","content":"帮我查 main.go","seq":1,"timestamp":"..."}
-{"role":"assistant","content":null,"tool_calls":[...],"seq":2,"timestamp":"..."}
-{"role":"tool","tool_call_id":"call_001","content":"...","seq":3,"timestamp":"..."}
+{"type":"user","content":"帮我查 main.go","seq":1,"timestamp":"..."}
+{"type":"llm","content":null,"tool_calls":[{"call_id":"tc1","name":"read","args":{...}}],"seq":2,"timestamp":"..."}
+{"type":"tool","call_id":"tc1","content":"package main...","seq":3,"timestamp":"..."}
+{"type":"compact","trigger":"auto","before":45000,"after":30000,"content":"<摘要>","seq":4,"timestamp":"..."}
 ```
 
 seq 用于 reef 摘要中的原文引用定位（`[seq:401-435]`）和 Read 工具的行号精确定位。
+
+---
+
+## DEC-V07：skill 类型合并入 system
+
+**日期**：2026-06-09
+**状态**：已决定
+
+**决策**：Skill 激活/切换不作为独立 type，而是归入 `system` 类型。`system.action = "update"` + `skill` 字段记录 skill 变更。
+
+**原因**：Skill 切换本质是 system prompt 的一次增量变更，语义上属于 system 类型。独立为 type 会导致两个类型记录同一类事件（system prompt 变更），增加无谓的类型膨胀。
+
+---
+
+## DEC-V08：skill 类型合并入 system
+
+**日期**：2026-06-09
+**状态**：已决定
+
+**决策**：Skill 激活/切换不作为独立 type，而是归入 `system` 类型。`system.action = "update"` + `skill` 字段记录 skill 变更。
+
+**原因**：Skill 切换本质是 system prompt 的一次增量变更，语义上属于 system 类型。独立为 type 会导致两个类型记录同一类事件（system prompt 变更），增加无谓的类型膨胀。
+
+---

@@ -18,7 +18,7 @@ Argo 是一个用 Go 实现的极简 AI Agent 框架。六个模块 (deck/helm/r
 | **deck** | 工具注册、发现、调用。统一内部工具/外部CLI/MCP三种来源 | Go 自由函数 + 接口 | 详细设计完成 |
 | **helm** | Agent 主循环。用户输入→LLM→工具→结果→循环 | Go 自由函数 + channel 流式输出 | 详细设计完成 |
 | **reef** | 会话上下文压缩。token超限时裁剪旧消息、生成LLM摘要 | Go 代码固化流程骨架，SKILL.md 定义摘要模板 | 详细设计完成 |
-| **vault** | 对话记录持久化(transcript) + 跨会话长期记忆 | Go 文件/存储操作 | 待设计 |
+| **vault** | 对话记录持久化(transcript) + 跨会话长期记忆 | Go 文件/存储操作 | 详细设计完成 |
 | **sail** | 多模型API管理。屏蔽Anthropic/OpenAI/DeepSeek等差异 | Go 接口 + adapter模式 | 待设计 |
 | **crew** | SKILL.md技能加载与调度。渐进式披露注入system prompt | Go 文件扫描 + SKILL.md解析 | 详细设计完成 |
 
@@ -29,9 +29,9 @@ Argo 是一个用 Go 实现的极简 AI Agent 框架。六个模块 (deck/helm/r
 
 // Tools — deck 模块实现
 type Tools interface {
-    List(ctx context.Context) []ToolDef
-    Execute(ctx context.Context, def ToolDef, params map[string]any) ToolResult
-    Lookup(ctx context.Context, name string) (ToolDef, bool)
+    List() []Tool
+    Lookup(ctx context.Context, name string) (Tool, bool)
+    ExecuteBatch(ctx context.Context, calls []ToolCall) []ToolResult
 }
 
 // Compactor — reef 模块实现
@@ -66,7 +66,7 @@ type Skills interface {
 ```
 argo run / argo serve
   │
-  ├── deck  注册 → 内部工具 init() + barrel
+  ├── deck  注册 → import tools/builtin 触发 init() 自注册
   │               → 读 ~/.argo/tools.json → 注册外部 CLI 工具
   │               → spawn MCP 子进程 → 注册 MCP 工具
   ├── vault  初始化 → 创建/打开 session 目录
@@ -97,7 +97,7 @@ helm.runLoop()
   │      ├── Event.tool_use    → LLM 要调工具
   │      └── Event.done        → 最终回复 + token 用量
   │
-  ├── 5. deck.Execute(tool_use)             // 执行工具（如 LLM 有 tool_use）
+  ├── 5. deck.Lookup(name) → Tool.Execute(params)             // 执行工具（如 LLM 有 tool_use）
   │      └── Event.tool_use (Result 已填充) → 工具执行完成
   │
   ├── 6. vault.Append(newMessages)          // 写入对话记录

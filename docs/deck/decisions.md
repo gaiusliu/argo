@@ -7,7 +7,7 @@
 **日期**：2026-06-02
 **状态**：已决定
 
-**决策**：`ToolDef` 最少注册字段为 4 个——`name` + `description` + `parameters` + `execute`。
+**决策**：`Tool` 接口最少方法为 4 个——`Name` + `Description` + `Execute` + `Concurrency`。
 
 **背景**：调研 7 个项目（Claude-Code、OpenCode、Hermes Agent、CrewAI、OpenClaw、Nanoclaw、pi）后，pi 的四要素接口（name + description + parameters + execute）是最干净的抽象。Claude-Code 的 Tool 接口有 10+ 字段（包括 UI 渲染器、权限检查、MCP 标志），OpenCode 的返回 Effect 类型，这些对 MVP 都是过度设计。
 
@@ -27,11 +27,11 @@
 
 | 来源 | 注册方式 | 理由 |
 |------|---------|------|
-| 内部工具 | `init()` 自注册 + [barrel 触发](../glossary.md#barrel-触发) | Go 编译时保证，无需配置文件 |
+| 内部工具 | `init()` + `deck.Register()` + `tools/builtin` 包导入触发 | Go 编译时保证，无需配置文件 |
 | 外部 CLI | `~/.argo/tools.json` → `cli` 列表，每项 2 字段（name + description） | 零代码接入，参数通过 `--help` 现场获取 |
 | MCP | `~/.argo/tools.json` → `mcp` 列表，每项 2 字段（name + command） | 服务器自描述（`tools/list`），无需手写 schema |
 
-三种来源归一化为同一 `ToolDef` 接口。CLI 和 MCP 共用一个配置文件 `~/.argo/tools.json`。
+三种来源归一化为同一 `Tool` 接口。CLI 和 MCP 共用一个配置文件 `~/.argo/tools.json`。
 
 **拒绝的替代方案**：
 - CLI 工具和 MCP 工具分别用两个配置文件 → 增加用户心智负担，一个文件两个列表足够清晰。
@@ -49,7 +49,7 @@
 
 **决策**：声明式条件（方案 B）+ 来源分流。
 
-`ToolDef` 携带 `[]Condition` 字段，MVP 支持两种条件类型：`Kind: "binary"`（检查可执行文件在 PATH）和 `Kind: "env"`（检查环境变量已设置）。
+`Tool` 携带 `[]Condition` 字段，MVP 支持两种条件类型：`Kind: "binary"`（检查可执行文件在 PATH）和 `Kind: "env"`（检查环境变量已设置）。
 
 - 内部工具：大多数不写 Conditions（默认永远可见），少数需要运行时环境的开发者手写
 - 外部 CLI：`LoadConfig()` 自动生成 `{Kind: "binary", Key: "<name>"}`
@@ -144,7 +144,7 @@ if len(Output) > MaxOutputChars:
     return head + "\n\n[... 输出被截断，省略 X 字符，原始长度 Y 字符 ...]\n\n" + tail
 ```
 
-默认值：`MaxOutputChars=50000`，`PreviewChars=2000`。每个工具可通过 `ToolDef` 覆盖上限。
+默认值：`MaxOutputChars=50000`，`PreviewChars=2000`。每个工具可通过 `Tool` 覆盖上限。
 
 **原因**：工具输出截断是所有 Agent 框架的通用需求。一个 `cat 大文件` 就可能撑爆 context window。必须做，但 MVP 不需复杂方案。
 
@@ -173,25 +173,59 @@ if len(Output) > MaxOutputChars:
 
 ---
 
-## DEC-008：Executor 设计——interface + 工厂函数
+## DEC-008：Tool 接口 —— 三种未导出实现
 
 **日期**：2026-06-04
 **状态**：已决定
 
-**决策**：用 `Executor` interface + 三个实现（BuiltinExecutor / CLIExecutor / MCPExecutor）+ `buildExecutor` 工厂函数。Go 生态中所有成熟框架（Eino、Graft、trpc-agent-go）均使用此模式。
+**决策**：工具统一抽象为 `Tool` 接口，三种来源通过三个未导出的 struct 实现。
 
 ```go
-type Executor interface {
+type Tool interface {
+    Name() string
+    Description() string
     Execute(ctx context.Context, params map[string]any) (ToolResult, error)
+    Concurrency() ConcurrencyMode
 }
-type BuiltinExecutor struct { Fn func(...) }
-type CLIExecutor     struct { Binary string }
-type MCPExecutor     struct { ServerName, ToolName string; Manager *MCPManager }
+
+// builtinTool — handler 函数指针。参考 Claude Code SDK 的 SimpleTool 模式
+type builtinTool struct {
+    name        string
+    description string
+    handler     func(ctx context.Context, params map[string]any) (ToolResult, error)
+    concurrency  ConcurrencyMode
+}
+
+// cliTool — exec.Command 通用适配
+type cliTool struct {
+    name        string
+    description string
+    binary      string
+    concurrency  ConcurrencyMode
+}
+
+// mcpTool — 委托 MCPManager.CallTool。Name 由 serverName + toolName 推导
+type mcpTool struct {
+    description string
+    serverName  string
+    toolName    string
+    inputSchema json.RawMessage
+    manager     *MCPManager
+    concurrency  ConcurrencyMode
+}
 ```
+
+**原因**：
+
+原设计使用 `Executor` interface + `ToolExecutor` 调度器两层结构。后续审查发现：
+
+1. `ToolExecutor` 和 `Executor` 职责重叠——ToolExecutor 做权限检查 + 分区调度 + 后处理，Executor 做单次执行，但 helm 实际只需要 `Lookup` + `Execute`
+2. 参考 Claude Code SDK 的 `SimpleTool` 模式，builtin 工具用函数指针而非独立 struct，足够简单
+3. 包级 `ExecuteBatch` 吸收批量调度，`postProcess` 降为内部函数，不再需要 `ToolExecutor` 这个公开类型
 
 **拒绝的替代方案**：
 
 | 方案 | 拒绝理由 |
 |------|---------|
-| **tagged struct（Source + 互斥字段 + switch）** | 违反 Go 社区惯例。Eino/Graft/trpc-agent-go 全部用 interface 多态 |
-| **ToolDef 直接存 Executor 实例** | interface 值拷贝共享底层数据，工厂函数每次生成新实例避免并发风险 |
+| **Executor interface + ToolExecutor 调度器** | 两层抽象导致 helm 需要了解 Lookup → buildExecutor → Execute 三步流程，暴露了内部结构 |
+| **Tool struct + 工厂函数** | 工具不应该先定义再构建——Tool 接口直接具备 Execute 能力，拿到就能用 |

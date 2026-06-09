@@ -30,9 +30,9 @@ type HelmDeps struct {
 // 以下接口由 helm（消费者）定义，各模块包提供实现
 
 type Tools interface {
-    List(ctx context.Context) []ToolDef
+    List() []Tool
+    Lookup(ctx context.Context, name string) (Tool, bool)
     ExecuteBatch(ctx context.Context, calls []ToolCall) []ToolResult
-    Lookup(ctx context.Context, name string) (ToolDef, bool)
 }
 
 type Compactor interface {
@@ -98,7 +98,7 @@ func runLoop(ctx context.Context, deps HelmDeps, state *TurnState) (<-chan Event
 
 // buildSystemPrompt — helm 主动向各模块索取信息，拼装 system prompt
 // 每轮 LLM 调用前执行
-func buildSystemPrompt(ctx context.Context, deps HelmDeps, deckTools []ToolDef) string
+func buildSystemPrompt(ctx context.Context, deps HelmDeps, deckTools []Tool) string
 ```
 
 ## 核心循环伪代码

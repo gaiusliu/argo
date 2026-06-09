@@ -10,7 +10,7 @@
 
 - **职责**：工具的注册、发现、描述和调用。统一 CLI 本地工具和 MCP 协议工具的接入面，对上屏蔽不同工具来源的调用差异
 - **消费**：无（最底层模块，不依赖其他 Argo 模块）
-- **产出**：工具注册表（ToolRegistry），供 helm 查询可用工具列表和发起工具调用
+- **产出**：包级函数 List / Lookup / ExecuteBatch，供 helm 查询可用工具列表和发起工具调用
 
 ### helm — 核心 Agent 循环
 
@@ -70,7 +70,7 @@
 ### Model 协议
 
 - 由 sail 定义，helm 消费
-- 统一调用接口：`Chat(messages []Message, tools []ToolDef, options ChatOptions) (*ChatResponse, error)`
+- 统一调用接口：`Chat(messages []Message, tools []Tool, options ChatOptions) (*ChatResponse, error)`
 - ChatOptions SHALL 支持：model 选择、temperature、max_tokens
 - ChatResponse SHALL 包含：文本回复、工具调用请求列表（如有）、token 用量
 - sail 屏蔽 OpenAI / Anthropic / DeepSeek 等不同 API 的差异，对 helm 暴露一致的调用面
