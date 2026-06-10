@@ -110,6 +110,8 @@ helm.runLoop()
 ```
 ~/.argo/
 ├── tools.json                 // deck: 外部 CLI + MCP 工具配置
+├── profile.md                 // vault: 用户画像/偏好（LLM 维护，5K 预算）
+├── AGENTS.md                  // vault: 硬性约束（用户管理，LLM 只读）
 ├── sessions/
 │   └── {session_id}/
 │       └── transcript.jsonl   // vault: 对话记录
@@ -118,7 +120,6 @@ helm.runLoop()
 │   │   └── SKILL.md           // reef: 压缩摘要模板
 │   └── learn/
 │       └── SKILL.md           // 业务 Skill（由 Vug/叩问等上层定义）
-└── memories/                  // vault: 长期记忆存储（待设计）
 
 代码仓库内：
 argo/

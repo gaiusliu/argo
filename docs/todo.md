@@ -6,10 +6,14 @@
 
 ### 模块依赖
 
-  deck ──┐
-  vault ─┤
-  sail ──┼──→ reef ──→ helm ──→ cmd
-  crew ─┘
+```mermaid
+flowchart LR
+    deck --> reef
+    vault --> reef
+    sail --> reef
+    crew --> reef
+    reef --> helm --> cmd
+```
 
 ### 模块目标
 
@@ -24,7 +28,11 @@
 
 ### 模块依赖
 
-  sail ──→ reef ←── crew
+```mermaid
+flowchart LR
+    sail --> reef
+    crew --> reef
+```
 
 ### 模块目标
 
@@ -36,11 +44,14 @@
 
 ### 模块依赖
 
-  deck ──┐
-  vault ─┤
-  sail ──┼──→ helm
-  crew ─┤
-  reef ─┘
+```mermaid
+flowchart LR
+    deck --> helm
+    vault --> helm
+    sail --> helm
+    crew --> helm
+    reef --> helm
+```
 
 ### 模块目标
 
@@ -52,8 +63,11 @@
 
 ### 模块依赖
 
-  helm ──→ cmd/run
-    └────→ cmd/serve
+```mermaid
+flowchart LR
+    helm --> cmd_run[cmd/run]
+    helm --> cmd_serve[cmd/serve]
+```
 
 ### 模块目标
 

@@ -10,7 +10,7 @@ vault 是 Argo 的统一存储层，提供 `Memory` 接口的默认文件系统�
 vault/
 ├── vault.go        // Memory 接口 + Register / Load 包级函数
 ├── file.go         // FileVault 默认文件系统实现
-├── transcript.go   // transcript.jsonl 7 种 type 的 record 写入
+├── transcript.go   // transcript.jsonl 6 种 type 的 record 写入
 ├── profile.go      // profile.md 读写 + 预算控制 + 变更跟踪 / AGENTS.md 只读加载
 ├── types.go        // MemoryEntry, RecallResult
 └── vault_test.go
@@ -22,12 +22,9 @@ vault/
 // Memory — helm 定义，vault 提供实现
 type Memory interface {
     Append(ctx context.Context, messages []Message) error
+    Load(ctx context.Context) ([]Message, error) // 从 transcript 重建 LLM 上下文
     Recall(ctx context.Context) (*RecallResult, error)
-    Store(ctx context.Context, entry MemoryEntry) error
-}
-
-type MemoryEntry struct {
-	Content string // profile.md 写入内容
+    Store(ctx context.Context, content string) error // 写入 profile.md
 }
 
 type RecallResult struct {
@@ -58,8 +55,9 @@ type FileVault struct { ... }
 func NewFileVault(sessionDir string) *FileVault
 
 func (v *FileVault) Append(ctx context.Context, messages []Message) error
+func (v *FileVault) Load(ctx context.Context) ([]Message, error)
 func (v *FileVault) Recall(ctx context.Context) (*RecallResult, error)
-func (v *FileVault) Store(ctx context.Context, entry MemoryEntry) error
+func (v *FileVault) Store(ctx context.Context, content string) error
 
 // budgetCheck — profile.md 超出预算时返回 true
 func budgetCheck(path string, maxChars int) bool
@@ -76,11 +74,11 @@ func budgetCheck(path string, maxChars int) bool
     → ~/.argo/sessions/{id}/transcript.jsonl 追加
 
 LLM 发现用户偏好时（LLM 工具调用）:
-  vault.Store(MemoryEntry{Type:"profile", Content:"用户偏好 Go 方案", Source:"llm"})
+  vault.Store(ctx, "用户偏好 Go 方案")
     → profile.md 追加一条，写入前检查预算
 
 LLM 更新用户画像时（LLM 工具调用）:
-  vault.Store(MemoryEntry{Type:"profile", Content:"用户偏好 Rust 方案", Reason:"用户说以后新项目都用 Rust"})
+  vault.Store(ctx, "用户偏好 Rust 方案，不再用 Go")
     → profile.md 写入或更新一条，写入前检查 5,000 字符预算
 
 会话开始时（helm 调）:
@@ -92,8 +90,10 @@ LLM 更新用户画像时（LLM 工具调用）:
 ## 目录结构
 
 ```
-~/.argo/sessions/{session_id}/
-├── transcript.jsonl       // 对话记录（7 种 type 的 JSONL record）
-├── profile.md             // 用户画像/偏好（LLM 维护，5K 字符预算）
-└── AGENTS.md              // 硬性约束（用户管理，LLM 只读）
+~/.argo/
+├── profile.md             // 用户画像/偏好（LLM 维护，5K 字符预算，框架级）
+├── AGENTS.md              // 硬性约束（用户管理，LLM 只读，框架级）
+├── sessions/
+│   └── {session_id}/
+│       └── transcript.jsonl  // 对话记录（6 种 type 的 JSONL record，会话级）
 ```

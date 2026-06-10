@@ -83,33 +83,30 @@
 - Skill 之间互斥：同一会话 SHALL 只激活一个 Skill
 
 ## 模块关系图
+```mermaid
+flowchart TB
+    User["用户 / 客户端"]
 
+    User -->|CLI 模式| CLI[argo run]
+    User -->|Gateway 模式| GW[argo serve]
+
+    CLI --> Helm["helm<br/>输入 → 思考 → 工具调用 → 输出"]
+    GW --> Helm
+
+    Helm --> Deck[deck<br/>工具]
+    Helm --> Reef[reef<br/>压缩]
+    Helm --> Vault[vault<br/>记忆]
+    Helm --> Sail[sail<br/>模型]
+    Helm --> Crew[crew<br/>技能]
 ```
-          ┌──────────────────────────────────────┐
-          │              用户 / 客户端              │
-          └──────┬───────────────┬───────────────┘
-                 │   CLI 模式     │   Gateway 模式
-                 ▼                ▼
-          ┌──────────────────────────────────────┐
-          │             helm (Agent 循环)          │
-          │   ┌──────────────────────────────┐   │
-          │   │  输入 → 思考 → 工具调用 → 输出  │   │
-          │   └──────────────────────────────┘   │
-          └───┬──────┬──────┬──────┬──────┬──────┘
-              │      │      │      │      │
-              ▼      ▼      ▼      ▼      ▼
-          ┌──────┐┌──────┐┌──────┐┌──────┐┌────────┐
-          │ deck ││ reef ││vault ││sail││crew │
-          │ 工具  ││ 压缩  ││ 记忆  ││ 模型  ││  技能   │
-          └──────┘└──────┘└──────┘└──────┘└────────┘
 
 数据流（箭头方向 = 数据消费方向）：
-  helm ← deck     : 查询可用工具列表 → 发起工具调用 → 接收调用结果
-  helm ← reef     : 每轮 LLM 调用前，裁剪消息历史以防 context window 溢出
-  helm ← vault    : 会话开始时检索长期记忆 + 每轮结束后写入对话记录
-  helm ← sail     : 获取模型实例 → 发送 Chat 请求 → 接收模型响应
-  helm ← crew  : 会话开始时加载 Skill → 注入 system prompt
-```
+
+- helm ← deck：查询可用工具列表 → 发起工具调用 → 接收调用结果
+- helm ← reef：每轮 LLM 调用前，裁剪消息历史以防 context window 溢出
+- helm ← vault：会话开始时检索长期记忆 + 每轮结束后写入对话记录
+- helm ← sail：获取模型实例 → 发送 Chat 请求 → 接收模型响应
+- helm ← crew：会话开始时加载 Skill → 注入 system prompt
 
 ## 产品形态
 

@@ -20,8 +20,18 @@ vault SHALL 在每轮对话结束后将本轮产生的所有 record 同步追加
 #### 场景：每轮对话后落盘
 
 - 给定：helm 完成一轮对话，产生了 1 条 llm record + 1 条 tool record
-- 当：helm 调用 vault.Append(records)
+- 当：helm 调用 vault.Append(messages)
 - 则：transcript.jsonl 追加 2 行，不修改已有内容，不阻塞主循环
+
+### 需求：从 transcript 重建 messages
+
+vault SHALL 提供 Load 方法读取 transcript.jsonl，过滤出 user / llm / tool 三种 type 的 record，映射回 []Message，供 Gateway 模式下每轮请求时重建 LLM 上下文。
+
+#### 场景：Gateway 模式重建上下文
+
+- 给定：Gateway 收到新一轮请求，transcript.jsonl 中有 50 条 record，其中 40 条为 user/llm/tool
+- 当：helm 调用 vault.Load()
+- 则：返回的 []Message 包含 40 条，system / compact / profile record 被过滤掉
 
 ### 需求：跨会话用户画像
 
@@ -30,7 +40,7 @@ vault SHALL 提供 profile.md 存储用户画像和偏好。由 LLM 通过工具
 #### 场景：LLM 发现用户偏好
 
 - 给定：用户在对话中说"以后所有回复用中文"
-- 当：LLM 调用 vault.Store({type:"profile", content:"用户要求所有回复使用中文", source:"llm"})
+- 当：LLM 调用 vault.Store(ctx, "用户要求所有回复使用中文")
 - 则：profile.md 追加一条，写入前 LLM 检查预算，超限则合并旧条目
 
 ### 需求：跨会话硬性约束
