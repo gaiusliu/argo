@@ -43,9 +43,18 @@ cmd 入口 import _ "argo/deck/tools/builtin" 触发所有 init()
 ## Tool 接口
 
 ```go
+type ToolSource string
+
+const (
+    ToolSourceBuiltin ToolSource = "builtin"
+    ToolSourceCLI     ToolSource = "cli"
+    ToolSourceMCP     ToolSource = "mcp"
+)
+
 type Tool interface {
     Name() string
     Description() string
+    Source() ToolSource
     Execute(ctx context.Context, params map[string]any) (ToolResult, error)
     Concurrency() ConcurrencyMode
 }
@@ -53,11 +62,11 @@ type Tool interface {
 
 三种实现：
 
-| 实现 | Name | Description | Execute |
-|------|------|------|------|
-| builtinTool | 编译时指定 | 编译时指定 | handler 函数指针 |
-| cliTool | 配置文件指定 | 配置文件指定 | exec.Command |
-| mcpTool | `"mcp__" + serverName + "__" + toolName` | tools/list 返回的 description | MCPManager.CallTool |
+| 实现 | Name | Description | Source | Execute |
+|------|------|------|--------|------|
+| builtinTool | 编译时指定 | 编译时指定 | `ToolSourceBuiltin` | handler 函数指针 |
+| cliTool | 配置文件指定 | 配置文件指定 | `ToolSourceCLI` | exec.Command |
+| mcpTool | `"mcp__" + serverName + "__" + toolName` | tools/list 返回的 description | `ToolSourceMCP` | MCPManager.CallTool |
 
 ---
 
@@ -71,7 +80,7 @@ type Tool interface {
 - CLI：`LoadFromConfig()` 读取 tools.json 的 cli 列表，构造 cliTool 后 `Register()`
 - MCP：`MCPManager.Start()` 后 `tools/list` 获取清单，构造 mcpTool 后 `Register()`
 
-同名冲突：builtin > 外部。CLI 和 MCP 平权——启动时报错，不做静默覆盖。
+同名冲突：builtin > 外部。CLI 和 MCP 平权——启动时报错，不做静默覆盖。builtin 的 `init()` 注册在所有外部 Register 之前完成（Go 运行时保证），不存在"外部先注册、builtin 后覆盖"的反向时序。
 
 ### 能力 2：工具发现
 

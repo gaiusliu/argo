@@ -7,14 +7,17 @@
 **日期**：2026-06-02
 **状态**：已决定
 
-**决策**：`Tool` 接口最少方法为 4 个——`Name` + `Description` + `Execute` + `Concurrency`。
+**决策**：`Tool` 接口 5 个方法——`Name` + `Description` + `Source` + `Execute` + `Concurrency`。
 
 **背景**：调研 7 个项目（Claude-Code、OpenCode、Hermes Agent、CrewAI、OpenClaw、Nanoclaw、pi）后，pi 的四要素接口（name + description + parameters + execute）是最干净的抽象。Claude-Code 的 Tool 接口有 10+ 字段（包括 UI 渲染器、权限检查、MCP 标志），OpenCode 的返回 Effect 类型，这些对 MVP 都是过度设计。
+
+2026-06-12 新增 `Source() ToolSource` 方法。Register 在处理同名冲突时需要区分 builtin > 外部，若通过隐式类型断言获取来源，任何人对 Tool 接口的修改都可能间接破坏 Register 的优先级逻辑。`Source()` 作为显式契约消除这个隐患。`ToolSource` 为三值枚举（`ToolSourceBuiltin` / `ToolSourceCLI` / `ToolSourceMCP`）。
 
 **拒绝的替代方案**：
 - 加入 `toolset` 字段用于分组过滤 → MVP 阶段工具数量少，不需分组。后续可加。
 - 加入 `isConcurrencySafe` / `isReadOnly` 标志 → 这些属于执行阶段的属性，与注册无关。按需在 executor 层处理。
 - 加入 UI 渲染器（`renderToolUseMessage` 等）→ Argo 无 GUI/TUI，不需要。
+- 加入 `isMCP` 或特定来源标志 → 不采用单一来源标志，`Source()` 统一表达三种来源，扩展新来源时无需加新方法。
 
 ---
 
@@ -137,14 +140,18 @@
 
 **决策**：MVP 取最简方案——单工具字符数上限 + 保留头部 40% + 尾部 60% + 明确截断标记。
 
+截断触发条件必须考虑截断标记自身长度，避免"截断后比原文还长"的荒谬情况：原文仅超出几字节时，截断标记 + head + tail 的总长可能超过原文。因此设置 `TruncationMinSavings = 200`，只在 `len(Output) > MaxOutputChars + TruncationMinSavings` 时才截断，确保截断至少省下标记自身长度。
+
 ```
-if len(Output) > MaxOutputChars:
-    head = Output[:MaxOutputChars * 0.4]
-    tail = Output[end - MaxOutputChars * 0.6:]
-    return head + "\n\n[... 输出被截断，省略 X 字符，原始长度 Y 字符 ...]\n\n" + tail
+若 Output 长度 > MaxOutputChars + TruncationMinSavings：
+    头部 = Output 前 40%
+    尾部 = Output 后 60%
+    省略 = 原始长度 - 头部长度 - 尾部长度
+    标记 = "[... 输出被截断，省略 {省略} 字符，原始长度 {原始长度} 字符 ...]"
+    返回 头部 + 标记 + 尾部
 ```
 
-默认值：`MaxOutputChars=50000`，`PreviewChars=2000`。每个工具可通过 `Tool` 覆盖上限。
+默认值：`MaxOutputChars=50000`，`TruncationMinSavings=200`。每个工具可通过 `Tool` 覆盖上限。
 
 **原因**：工具输出截断是所有 Agent 框架的通用需求。一个 `cat 大文件` 就可能撑爆 context window。必须做，但 MVP 不需复杂方案。
 
@@ -178,42 +185,13 @@ if len(Output) > MaxOutputChars:
 **日期**：2026-06-04
 **状态**：已决定
 
-**决策**：工具统一抽象为 `Tool` 接口，三种来源通过三个未导出的 struct 实现。
+**决策**：工具统一抽象为 `Tool` 接口（5 方法，见 DEC-001），三种来源通过三个未导出的 struct 实现：
 
-```go
-type Tool interface {
-    Name() string
-    Description() string
-    Execute(ctx context.Context, params map[string]any) (ToolResult, error)
-    Concurrency() ConcurrencyMode
-}
+- `builtinTool` — handler 函数指针模式。注册时传入 handler func，Execute 调用 handler + postProcess。参考 Claude Code SDK 的 SimpleTool 模式。
+- `cliTool` — exec.Command 通用适配。binary 可执行文件路径 + paramsToArgs 参数转换 → execShell 执行 → postProcess 截断。
+- `mcpTool` — 委托 MCPManager。Name 由 `"mcp__" + serverName + "__" + toolName` 推导，避免不同 MCP 服务器间的工具名冲突。Execute 委托 MCPManager.CallTool + postProcess。
 
-// builtinTool — handler 函数指针。参考 Claude Code SDK 的 SimpleTool 模式
-type builtinTool struct {
-    name        string
-    description string
-    handler     func(ctx context.Context, params map[string]any) (ToolResult, error)
-    concurrency  ConcurrencyMode
-}
-
-// cliTool — exec.Command 通用适配
-type cliTool struct {
-    name        string
-    description string
-    binary      string
-    concurrency  ConcurrencyMode
-}
-
-// mcpTool — 委托 MCPManager.CallTool。Name 由 serverName + toolName 推导
-type mcpTool struct {
-    description string
-    serverName  string
-    toolName    string
-    inputSchema json.RawMessage
-    manager     *MCPManager
-    concurrency  ConcurrencyMode
-}
-```
+三种 struct 均为 unexported，由 Register / LoadFromConfig 内部构造，helm 只通过 Tool 接口交互。
 
 **原因**：
 
