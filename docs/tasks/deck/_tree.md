@@ -15,6 +15,8 @@
 
 `ToolSource` · `ConcurrencyMode` · `ToolResult` · `ToolCall` · `ToolsConfig` · `CLIToolEntry` · `MCPToolEntry` · `builtinTool` struct · `cliTool` struct · `mcpTool` struct · `NewBuiltinTool` · unexported `tools` map
 
+> 注：`TruncationStrategy` / `TruncationConfig` / `TruncationConfigJSON` 不再由调度器直接生成，已移交给 [postProcess.md](postProcess.md) task 内新增（详见 postProcess.md「依赖详情 → 本 task 内新增」）。
+
 ## 依赖关系图
 
 > 箭头方向：A → B 表示 A 依赖 B（B 必须先就绪）
@@ -22,16 +24,17 @@
 
 ### 子系统 1：builtin 工具链
 
-覆盖 8 个 task：postProcess → builtinTool → 六个内置工具。Register 已单独在子系统 3 中。
+覆盖 9 个 task：truncation → postProcess → builtin → 六个内置工具。Register 已单独在子系统 3 中。
 
 ```mermaid
 flowchart LR
     subgraph L0["Layer 0"]
+        tr["truncation"]
         ps["postProcess"]
     end
 
     subgraph L1["Layer 1"]
-        bt["builtinTool"]
+         bt["builtin"]
     end
 
     subgraph L2["Layer 2 · tools/builtin/"]
@@ -39,6 +42,7 @@ flowchart LR
     end
 
     ps --> bt
+    ps -->|调用 Writer.Write| tr
     bt -.->|实现| Tool["Tool · 接口"]
     bt -.->|构造| bash
     bt -.->|构造| read
@@ -50,19 +54,19 @@ flowchart LR
 
 ### 子系统 2：CLI + 配置加载
 
-覆盖 5 个 task：paramsToArgs / execShell / postProcess → cliTool → LoadFromConfig。
+覆盖 5 个 task：params_to_args / exec_shell / postProcess → cli → LoadConfig。
 
 ```mermaid
 flowchart LR
     subgraph L0["Layer 0"]
-        pa["paramsToArgs"]
-        es["execShell"]
+         pa["params_to_args"]
+        es["exec_shell"]
         ps["postProcess"]
     end
 
     subgraph L1["Layer 1"]
-        ct["cliTool"]
-        lc["LoadFromConfig"]
+         ct["cli"]
+        lc["LoadConfig"]
     end
 
     pa --> ct
@@ -74,7 +78,7 @@ flowchart LR
 
 ### 子系统 3：注册系统
 
-覆盖 2 个 task：Register 被 Layer 1（LoadFromConfig）和 Layer 2（六个 builtin 工具）共同依赖。跨子系统引用见子系统 1、2。
+覆盖 2 个 task：Register 被 Layer 1（LoadConfig）和 Layer 2（六个 builtin 工具）共同依赖。跨子系统引用见子系统 1、2。
 
 ```mermaid
 flowchart LR
@@ -83,7 +87,7 @@ flowchart LR
     end
 
     subgraph consumers["消费者（跨子系统）"]
-        lc["LoadFromConfig · 子系统2"]
+        lc["LoadConfig · 子系统2"]
         builtins["bash~glob · 子系统1"]
     end
 
@@ -93,7 +97,7 @@ flowchart LR
 
 ### 子系统 4：MCP + 批量执行
 
-覆盖 3 个 task：postProcess → MCPManager+mcpTool。LoadFromConfig 见子系统 2。ExecuteBatch 依赖 Lookup。
+覆盖 3 个 task：postProcess → MCPManager+mcpTool。LoadConfig 见子系统 2。ExecuteBatch 依赖 Lookup。
 
 ```mermaid
 flowchart LR
@@ -123,17 +127,18 @@ flowchart LR
 | 阶段 | 前置 | # | Task | 状态 |
 |------|------|---|------|------|
 | ① 接口 | 无 | 1 | Tool | ✅ code_done |
-| ② Layer 0 | ① | 1 | postProcess | ✅ code_done |
-| ② | | 2 | execShell | ✅ code_done |
-| ② | | 3 | paramsToArgs | ✅ code_done |
-| ② | | 4 | Register | ✅ code_done |
-| ② | | 5 | List | ✅ code_done |
-| ② | | 6 | Lookup | ✅ code_done |
-| ③ Layer 1 | ② | 1 | builtinTool | 🟡 test_ready |
-| ③ | | 2 | cliTool | 🟡 test_ready |
+| ② Layer 0 | ① | 1 | truncation | ✅ code_done |
+| ② | | 2 | postProcess | 🟡 test_ready |
+| ② | | 3 | exec_shell | ✅ code_done |
+| ② | | 4 | params_to_args | ✅ code_done |
+| ② | | 5 | Register | ✅ code_done |
+| ② | | 6 | List | ✅ code_done |
+| ② | | 7 | Lookup | ✅ code_done |
+| ③ Layer 1 | ② | 1 | builtin | ⬜ pending_test |
+| ③ | | 2 | cli | ⬜ pending_test |
 | ③ | | 3 | MCPManager+mcpTool | ⬜ pending_test |
 | ③ | | 4 | ExecuteBatch | ⬜ pending_test |
-| ③ | | 5 | LoadFromConfig | ⬜ pending_test |
+| ③ | | 5 | LoadConfig | ⬜ pending_test |
 | ④ Layer 2 | ③ | 1 | bash | ⬜ pending_test |
 | ④ | | 2 | read | ⬜ pending_test |
 | ④ | | 3 | write | ⬜ pending_test |
@@ -146,7 +151,7 @@ flowchart LR
 | 层 | 完成/总数 |
 |----|----------|
 | 接口 | 1/1 ✅ |
-| Layer 0 | 6/6 ✅ |
+| Layer 0 | 6/7 |
 | Layer 1 | 0/5 |
 | Layer 2 | 0/6 |
 
@@ -154,5 +159,8 @@ flowchart LR
 
 1. **MCPManager + mcpTool 合并**：两者互相引用，拆分导致循环依赖。
 2. **Register/List/Lookup 独立**：共享 `tools` map 但不互调，可并行。
-3. **六个内置工具放在 Layer 2**：通过 init() 调用 deck.Register，依赖 Register（L0）和 builtinTool 类型（L1）。
+3. **六个内置工具放在 Layer 2**：通过 init() 调用 deck.Register，依赖 Register（L0）和 builtin 类型（L1）。
 4. **List 无消费者**：仅被 helm 直接调用（模块外部），deck 内部无人依赖，开发时机自由。
+5. **postProcess 接收 TruncationConfig**：每个工具自带截断策略（head/tail/HeadAndTail）+ 可配置百分点比例（int 1~80，详见 [DEC-010](../../deck/decisions.md#dec-010truncationconfig-ratiotailratio-改-int-百分点)），详见 [DEC-007](../../deck/decisions.md#dec-007工具结果后处理方案重写supersedes-原-dec-007-和-dec-009)。
+6. **truncation 目录管理独立为 Layer 0 task**（详见 [DEC-012](../../deck/decisions.md#dec-012truncation-目录管理归属)）：postProcess 通过 `truncation.Writer` 接口调用，IO 失败降级到无 path marker 模式。复用 DEC-007 路径约定（`~/.argo/truncation/tool-<unix-nano>-<random>.log`，retention 7 天）。
+6. **LoadFromConfig → LoadConfig**：函数重命名，语义更简洁。

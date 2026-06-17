@@ -19,31 +19,37 @@
 ## builtin 工具注册
 
 ```go
-// tools/builtin/read.go
+// deck/tools/builtin/read.go
 package builtin
 
-import "argo/deck"
+import (
+    "context"
+    "os"
+
+    "argo/deck"
+)
 
 func init() {
-    deck.Register(&deck.BuiltinTool{
-        Name:        "read",
-        Description: "读取文件内容，支持指定行范围",
-        Concurrency: deck.Concurrent,
-        Handler: func(ctx context.Context, params map[string]any) (deck.ToolResult, error) {
-            filePath := params["filePath"].(string)
+    deck.Register(deck.NewBuiltinTool(
+        "read",
+        "读取文件内容，支持指定行范围",
+        func(ctx context.Context, params map[string]any) (deck.ToolResult, error) {
+            filePath, _ := params["filePath"].(string)
             data, err := os.ReadFile(filePath)
             if err != nil {
                 return deck.ToolResult{Status: "error", Output: err.Error()}, nil
             }
             return deck.ToolResult{Status: "success", Output: string(data)}, nil
         },
-    })
+        deck.Concurrent,
+        deck.TruncationConfig{Strategy: deck.TruncationHead, Ratio: 20},
+    ))
 }
 ```
 
 ---
 
-## CLI 工具（LoadFromConfig 自动构造）
+## CLI 工具（LoadConfig 自动构造）
 
 用户只写了 `{ "name": "gh", "description": "GitHub CLI" }`，Argo 自动构造：
 

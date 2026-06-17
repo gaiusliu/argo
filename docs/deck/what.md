@@ -16,7 +16,7 @@ cmd 入口 import _ "argo/deck/tools/builtin" 触发所有 init()
 ### 外部 CLI 工具
 
 ```
-~/.argo/tools.json → cli 列表 → LoadFromConfig() 时构造 cliTool → deck.Register()
+~/.argo/tools.json → cli 列表 → LoadConfig() 时构造 cliTool → deck.Register()
 ```
 
 ### MCP 工具
@@ -30,13 +30,17 @@ cmd 入口 import _ "argo/deck/tools/builtin" 触发所有 init()
 ```json
 {
   "cli": [
-    { "name": "gh", "description": "GitHub CLI" }
+    { "name": "gh", "description": "GitHub CLI" },
+    { "name": "docker", "description": "Docker CLI",
+      "truncation": { "strategy": "HeadAndTail", "ratio": 20, "tail_ratio": 20 } }
   ],
   "mcp": [
     { "name": "github", "command": ["npx", "-y", "@anthropic/mcp-server-github"] }
   ]
 }
 ```
+
+CLI/MCP 条目内嵌可选 `truncation` 字段，省略时默认 tail(20)。
 
 ---
 
@@ -77,7 +81,7 @@ type Tool interface {
 三个 `Register` 时机：
 
 - builtin：`tools/builtin/*.go` 的 `init()` 调用 `deck.Register()`
-- CLI：`LoadFromConfig()` 读取 tools.json 的 cli 列表，构造 cliTool 后 `Register()`
+- CLI：`LoadConfig()` 读取 tools.json 的 cli 列表，构造 cliTool 后 `Register()`
 - MCP：`MCPManager.Start()` 后 `tools/list` 获取清单，构造 mcpTool 后 `Register()`
 
 同名冲突：builtin > 外部。CLI 和 MCP 平权——启动时报错，不做静默覆盖。builtin 的 `init()` 注册在所有外部 Register 之前完成（Go 运行时保证），不存在"外部先注册、builtin 后覆盖"的反向时序。
@@ -100,7 +104,17 @@ helm → deck.Lookup(name) → Tool
 
 ### 能力 4：结果后处理
 
-`Execute()` 内部调用 `postProcess()`：单工具输出超过 50,000 字符时截断，保留头 40% + 尾 60% + 截断标记。
+`Execute()` 内部调用 `postProcess(result, t.truncation)`：单工具输出超过 50,000 字符时按工具的 `TruncationConfig` 截断。
+
+三种截断策略（`TruncationStrategy`）：
+
+| 策略 | 行为 | 默认比例 |
+|------|------|---------|
+| `head` | 保留前 N 字符 | 20% |
+| `tail` | 保留后 N 字符 | 20% |
+| `HeadAndTail` | 保留前 N1 + 后 N2 字符 | 头 20% + 尾 20% |
+
+截断百分点可配置，Ratio 1~80 整数（含义"保留 N% 字符"，详见 [DEC-010](decisions.md#dec-010truncationconfig-ratiotailratio-改-int-百分点)）。内置工具硬编码不可覆盖，外部工具通过 tools.json 配置。截断时完整 Output 写入 `~/.argo/truncation/` 目录，metadata 自动记录截断信息供 LLM 决策。
 
 ### 能力 5：批量执行
 

@@ -8,18 +8,28 @@ deck 提供 `Tool` 接口作为工具的统一抽象。CLI / MCP / builtin 三�
 
 ```
 deck/
-├── tool.go         // Tool 接口 + ToolResult 类型定义
-├── builtin.go      // builtinTool 实现
-├── cli.go          // cliTool 实现
-├── mcp.go          // mcpTool 实现 + MCPManager
-├── registry.go     // Register / LoadFromConfig / List / Lookup + unexported map
-├── config.go       // LoadConfig / ToolsConfig
-├── batch.go        // ExecuteBatch + ConcurrencyMode
-├── postprocess.go  // postProcess 内部函数
-├── tools/
-│   └── builtin/     // 六个内置工具（bash.go, read.go, write.go, edit.go, grep.go, glob.go）
-│                    // 各文件 init() 调用 deck.Register()，只需 import 此包即可触发
-└── types.go        // ToolsConfig, ToolCall, ConcurrencyMode
+├── tool.go              // Tool 接口 + ToolResult 类型定义
+├── types.go             // ToolSource / ConcurrencyMode / TruncationStrategy / ToolCall / ToolsConfig / CLIToolEntry / MCPToolEntry
+├── builtin.go           // builtinTool 实现（handler 函数指针）
+├── cli.go               // cliTool 实现
+├── exec_shell.go        // execShell 内部函数
+├── params_to_args.go    // paramsToArgs 内部函数
+├── post_process.go       // postProcess 内部函数（按 TruncationConfig 截断，写 metadata）
+├── truncation.go        // writeTruncation / cleanupOldTruncations
+├── register.go          // Register + unexported tools map + ToolError
+├── list.go              // List 函数
+├── lookup.go            // Lookup 函数
+├── mcp.go               // mcpTool 实现 + MCPManager（待 Layer 1 落地）
+├── batch.go             // ExecuteBatch（待创建）
+├── config.go            // LoadConfig（待创建）
+└── tools/
+    └── builtin/          // 六个内置工具（待 Layer 2 落地，每个在 init() 声明 TruncationStrategy）
+        ├── bash.go
+        ├── read.go
+        ├── write.go
+        ├── edit.go
+        ├── grep.go
+        └── glob.go
 ```
 
 ## 核心类型
@@ -49,10 +59,13 @@ deck/
 | `ConcurrencyMode` | — | 字符串类型，值 `"concurrent"` / `"sequential"` |
 | `ToolResult` | `Output string`, `Status string`, `Metadata map` | 工具执行结果。Status 取值：`"success"` / `"error"` / `"timeout"` |
 | `ToolCall` | `Name string`, `Params map` | 一次工具调用请求 |
+| `TruncationStrategy` | — | iota 整型枚举。`TruncationHead` / `TruncationTail` / `TruncationHeadAndTail`，各带 `String()` 方法返回 `"head"` / `"tail"` / `"HeadAndTail"` |
+| `TruncationConfig` | `Strategy TruncationStrategy`, `Ratio int`, `TailRatio int` | 截断配置。Ratio 主保留百分点 1~80（默认 20 = 20%），TailRatio 仅 HeadAndTail 启用（默认 20 = 20%）。`Validate()` 方法校验 Ratio > 0 且 ≤ 80。详见 [DEC-010](decisions.md#dec-010truncationconfig-ratiotailratio-改-int-百分点) |
+| `TruncationConfigJSON` | `Strategy string`, `Ratio *int`, `TailRatio *int` | JSON 反序列化用，用于 `tools.json` 中 CLI/MCP 条目的可选 `truncation` 字段。值含义与 `TruncationConfig` 相同（百分点整数）|
 
 ## 三种 Tool 实现
 
-三个 struct 均为 unexported，由 Register / LoadFromConfig 构造，helm 只通过 Tool 接口交互。
+三个 struct 均为 unexported，由 Register / LoadConfig 构造，helm 只通过 Tool 接口交互。
 
 ### builtinTool
 
@@ -64,10 +77,11 @@ deck/
 | `description` | `string` | 工具描述 |
 | `handler` | `func(ctx, params) (ToolResult, error)` | 具体执行逻辑 |
 | `concurrency` | `ConcurrencyMode` | 并发模式 |
+| `truncation` | `TruncationConfig` | 截断配置，`NewBuiltinTool` 时传入默认值 |
 
 方法逻辑：
 - `Name()` / `Description()` / `Source()` / `Concurrency()` → 直接返回对应字段
-- `Execute(ctx, params)` → 调用 `handler(ctx, params)`，结果经 `postProcess` 截断后返回
+- `Execute(ctx, params)` → 调用 `handler(ctx, params)`，结果经 `postProcess(result, t.truncation)` 截断后返回
 
 ### cliTool
 
@@ -79,10 +93,11 @@ deck/
 | `description` | `string` | 工具描述 |
 | `binary` | `string` | 可执行文件名或路径 |
 | `concurrency` | `ConcurrencyMode` | 并发模式 |
+| `truncation` | `TruncationConfig` | 截断配置，默认 tail(20)，可由 tools.json 覆盖 |
 
 方法逻辑：
 - `Name()` / `Description()` / `Source()` / `Concurrency()` → 直接返回对应字段
-- `Execute(ctx, params)` → `paramsToArgs(params)` 转换参数 → `execShell(ctx, binary, args)` 执行 → `postProcess` 截断
+- `Execute(ctx, params)` → `paramsToArgs(params)` 转换参数 → `execShell(ctx, binary, args)` 执行 → `postProcess(result, t.truncation)` 截断
 
 ### mcpTool
 
@@ -96,18 +111,19 @@ MCP 协议工具的 Tool 适配器。Name 由 `"mcp__" + serverName + "__" + too
 | `inputSchema` | `json.RawMessage` | 参数 JSON Schema |
 | `manager` | `*MCPManager` | 关联的 MCP 管理器 |
 | `concurrency` | `ConcurrencyMode` | 并发模式 |
+| `truncation` | `TruncationConfig` | 截断配置，默认 tail(20)，可由 tools.json 覆盖 |
 
 方法逻辑：
 - `Name()` → 拼接 `"mcp__" + serverName + "__" + toolName`
 - `Description()` / `Source()` / `Concurrency()` → 直接返回对应字段
-- `Execute(ctx, params)` → 委托 `manager.CallTool(ctx, serverName, toolName, params)`，结果经 `postProcess` 截断
+- `Execute(ctx, params)` → 委托 `manager.CallTool(ctx, serverName, toolName, params)`，结果经 `postProcess(result, t.truncation)` 截断
 
 ## 包级 API
 
 | 函数 | 签名 | 职责 |
 |------|------|------|
 | `Register` | `func(t Tool) error` | 注册工具到进程唯一 map。同名冲突返回 error（builtin > 外部，CLI/MCP 同名报错） |
-| `LoadFromConfig` | `func(cfg ToolsConfig, mcp *MCPManager) error` | 解析 tools.json：CLI 条目 → 构造 cliTool → Register；MCP 条目 → Start → ListTools → 构造 mcpTool → Register |
+| `LoadConfig` | `func(cfg ToolsConfig, mcp *MCPManager) error` | 解析 tools.json：CLI 条目 → 构造 cliTool → Register；MCP 条目 → Start → ListTools → 构造 mcpTool → Register。CLI/MCP 条目内嵌可选 `truncation` 字段，省略时用默认 tail(20) |
 | `List` | `func() []Tool` | 返回所有已注册工具列表，排序稳定 |
 | `Lookup` | `func(name string) (Tool, bool)` | 精确查找，命中返回 (Tool, true)，未命中 (nil, false) |
 | `ExecuteBatch` | `func(ctx, calls []ToolCall) []ToolResult` | 按 ConcurrencyMode 分区：Concurrent 组 goroutine 并行，Sequential 组串行执行，合并结果 |
@@ -141,24 +157,26 @@ MCP 子进程生命周期管理。
 | 类型 | 字段 | JSON 字段 |
 |------|------|-----------|
 | `ToolsConfig` | `CLI []CLIToolEntry`, `MCP []MCPToolEntry` | `cli`, `mcp` |
-| `CLIToolEntry` | `Name`, `Description` | `name`, `description` |
-| `MCPToolEntry` | `Name`, `Command []string` | `name`, `command` |
+| `CLIToolEntry` | `Name`, `Description`, `Truncation *TruncationConfigJSON` | `name`, `description`, `truncation`（可选） |
+| `MCPToolEntry` | `Name`, `Command []string`, `Truncation *TruncationConfigJSON` | `name`, `command`, `truncation`（可选） |
 
 ## 内部辅助函数
 
 | 函数 | 签名 | 职责 |
 |------|------|------|
-| `postProcess` | `func(ToolResult) ToolResult` | 输出 > MaxOutputChars+TruncationMinSavings 时截断：头 40% + 标记 + 尾 60% |
+| `postProcess` | `func(result ToolResult, cfg TruncationConfig) ToolResult` | 输出 > MaxOutputChars 时按 cfg.Strategy 截断（head / tail / HeadAndTail），自动写 metadata。详见 [DEC-007](decisions.md#dec-007工具结果后处理方案重写supersedes-原-dec-007-和-dec-009) |
 | `execShell` | `func(ctx, binary, ...args) ToolResult` | 执行 shell 命令，合并 stdout+stderr |
 | `paramsToArgs` | `func(params map[string]any) ([]string, error)` | `{key: val}` → `["--key=val"]`，按 key 排序。nil value / 不支持类型返回 error |
+| `writeTruncation` | `func(content string) (string, error)` | 把完整输出写到 `~/.argo/truncation/tool-<ts>-<rand>.log`，返回路径 |
+| `cleanupOldTruncations` | `func(retention time.Duration)` | 清理超出保留期的 truncation 文件（默认 7 天）|
 
 ## 数据流
 
 ```
 启动时:
   builtin init() → deck.Register() → tools[name]
-  LoadConfig() → CLI 条目 → 构造 cliTool → deck.Register()
-              → MCP 条目 → spawn 子进程 → tools/list → 构造 mcpTool → deck.Register()
+  LoadConfig() → CLI 条目（含可选 truncation）→ 构造 cliTool → deck.Register()
+              → MCP 条目（含可选 truncation）→ spawn 子进程 → tools/list → 构造 mcpTool → deck.Register()
 
 每轮对话前:
   deck.List() → 滤除不可用工具 → []Tool → helm 取 Name()+Description() → 注入 system prompt

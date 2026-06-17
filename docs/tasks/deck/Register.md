@@ -49,7 +49,7 @@ func Register(t Tool) error
 
 ## 实现状态
 
-- 实现文件: deck/registry_stub.go → deck/registry.go（原 stub 文件已被替换为正式实现）
+- 实现文件: deck/register.go
 - 测试通过: 9/9 全部通过
 - 测试结果: go test -v -run "Register" ./deck/ — 2026-06-12 全部 PASS
 - 状态: code_done

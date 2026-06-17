@@ -11,11 +11,11 @@
 **测试策略**：每条覆盖以下场景
 
 - [ ] 2.1 实现包级 Register / List / Lookup + unexported map
-- [ ] 2.2 实现 LoadFromConfig（解析 ~/.argo/tools.json 的 cli + mcp 列表）
+- [ ] 2.2 实现 LoadConfig（解析 ~/.argo/tools.json 的 cli + mcp 列表，含可选 truncation）
 - [ ] 2.3 Register 正常注册 + 同名冲突报错
 - [ ] 2.4 List 返回排序稳定的完整列表
 - [ ] 2.5 Lookup 命中 / 未命中
-- [ ] 2.6 LoadFromConfig 正常解析 / 文件不存在 / JSON 格式错误
+- [ ] 2.6 LoadConfig 正常解析 / 文件不存在 / JSON 格式错误
 
 ## 3. 三种 Tool 实现（需测试）
 

@@ -1,6 +1,6 @@
 ---
 module: deck
-function: cliTool
+function: cli
 layer: 1
 status: test_ready
 depends_on:
@@ -12,11 +12,11 @@ depends_on:
     - Tool（deck 包接口，chart 已定义规格，task: Tool.md）
 ---
 
-# deck::cliTool
+# deck::cli
 
 ## 职责
 
-实现 Tool 接口，将外部 CLI 命令适配为 Tool。Execute 内部调用 paramsToArgs 转换参数 → execShell 执行命令 → postProcess 截断输出。
+实现 Tool 接口，将外部 CLI 命令适配为 Tool。Execute 内部调用 paramsToArgs 转换参数 → execShell 执行命令 → postProcess(result, t.truncation) 截断输出。
 
 ## 签名
 
@@ -25,7 +25,8 @@ type cliTool struct {
     name        string
     description string
     binary      string
-    concurrency  ConcurrencyMode
+    concurrency ConcurrencyMode
+    truncation  TruncationConfig
 }
 
 func (t *cliTool) Name() string
@@ -41,8 +42,8 @@ func (t *cliTool) Concurrency() ConcurrencyMode
 - `ToolResult` · `ConcurrencyMode` — 基础类型，调度器已生成
 
 ### 待实现（需等待）
-- `paramsToArgs` — 参数转换（task: [paramsToArgs.md](paramsToArgs.md)）
-- `execShell` — shell 调用（task: [execShell.md](execShell.md)）
+- `paramsToArgs` — 参数转换（task: [params_to_args.md](params_to_args.md)）
+- `execShell` — shell 调用（task: [exec_shell.md](exec_shell.md)）
 - `postProcess` — 结果截断（task: [postProcess.md](postProcess.md)）
 
 ## 测试场景

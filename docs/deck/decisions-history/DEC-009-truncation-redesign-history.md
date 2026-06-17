@@ -1,9 +1,13 @@
-# deck 截断逻辑重构摘要（pi 模式）
+# deck 截断逻辑重构摘要（pi 模式）— ⛔ 已废弃
 
-> **用途**：本文件是跨会话的执行参考。新会话开篇应先读此文件以理解背景、目标、已认可的设计与执行顺序，再开始任何修改。
+> **状态**：已被 [DEC-007（重写）](../decisions.md#dec-007工具结果后处理方案重写supersedes-原-dec-007-和-dec-009) 替代。本文件仅保留作历史参考。
 >
-> **生成时间**：用户决定用 pi/opencode 模式重写 deck 截断逻辑
-> **执行顺序**：C → B → A（先规约，再参数化，最后完整重构）
+> **废弃原因**：新设计在 DEC-009 head/tail 二选一的基础上，恢复 HeadAndTail 策略（三策略），引入可配置比例（Ratio/TailRatio），改为 TruncationConfig struct + iota 枚举，引入 Validate 校验。
+>
+> **原用途**：本文件是跨会话的执行参考。新会话开篇应先读此文件以理解背景、目标、已认可的设计与执行顺序，再开始任何修改。
+>
+> **原生成时间**：用户决定用 pi/opencode 模式重写 deck 截断逻辑
+> **原执行顺序**：C → B → A（先规约，再参数化，最后完整重构）
 
 ---
 
@@ -112,7 +116,7 @@ LLM 看到 metadata 可决定：
    - 决策：6 个工具各自的截断策略
    - 拒绝的替代方案：保留 head+tail 组合（节省 < 1%）/ 框架统一决定 head/tail（缺乏场景感知）
 3. 在 `argo/docs/deck/how.md` 第 17-19 行（`postProcess` 说明）更新为新设计
-4. 在 `argo/docs/tasks/deck/builtinTool.md` 测试场景表中标注"待 gen-code 阶段后新增 truncated 元数据测试"
+4. 在 `argo/docs/tasks/deck/builtin.md` 测试场景表中标注"待 gen-code 阶段后新增 truncated 元数据测试"
 
 **验证**：`go test ./deck/...` 仍 RED（不写代码，状态不变）
 
@@ -136,12 +140,12 @@ LLM 看到 metadata 可决定：
    - 改用对应 `truncateHead` 或 `truncateTail` 行为
    - 触发条件简化为 `outputLen > MaxOutputChars`
    - metadata 自动加 `truncated` / `original_length` / `kept_length` / `truncation_strategy`
-3. **不改** `builtinTool.go` 的 Execute（让 builtinTool 默认传 TruncationTail，与原设计兼容）
+3. **不改** `builtin.go` 的 Execute（让 builtinTool 默认传 TruncationTail，与原设计兼容）
 4. 更新 `argo/deck/postprocess_test.go`：
    - 把所有 `expectedTruncatedOutput` 测试拆为 `TestPostProcess_Head` 和 `TestPostProcess_Tail` 两组
    - 验证 metadata 字段
    - 验证新触发条件（> MaxOutputChars 触发，不再需要 +200）
-5. 更新 `argo/deck/builtinTool_test.go`：
+5. 更新 `argo/deck/builtin_test.go`：
    - `TestBuiltinTool_Execute_PostProcess` 改名或拆分（`Truncated` 改用新逻辑）
    - `TestBuiltinTool_Execute_HandlerError_OutputTruncated` 验证 metadata 字段
 
@@ -158,7 +162,7 @@ LLM 看到 metadata 可决定：
 1. 在 `argo/deck` 添加 truncation 目录管理：
    - 目录路径：`~/.local/share/argo/truncation/`（参考 opencode `TRUNCATION_DIR`）
    - 工具：`writeTruncation(content) (path, error)`、`cleanupOldTruncations(retention)` 等
-2. 改 `builtinTool.go` 的 Execute：
+2. 改 `builtin.go` 的 Execute：
    - 接受可选的 truncation 策略参数（或读 Tool 配置）
    - 调用 handler 后，如果 Output 超过 MaxOutputChars，先把完整内容写入 truncation 目录
    - metadata 加 `full_output_path: "/path/to/tool-xxx.log"`
@@ -168,8 +172,8 @@ LLM 看到 metadata 可决定：
    - `read` / `grep` / `glob` → TruncationHead
    - `write` / `edit` → TruncationNone
 4. 更新 `argo/docs/deck/how.md`：6 个工具的截断策略表
-5. 更新 `argo/docs/tasks/deck/builtinTool.md`：测试场景新增 metadata 断言
-6. 更新 `argo/deck/postprocess_test.go` 和 `builtinTool_test.go`：
+5. 更新 `argo/docs/tasks/deck/builtin.md`：测试场景新增 metadata 断言
+6. 更新 `argo/deck/postprocess_test.go` 和 `builtin_test.go`：
    - 新增 truncation 目录写盘测试
    - 验证 metadata 包含 `full_output_path`
    - 验证 cleanup 机制
@@ -187,15 +191,15 @@ LLM 看到 metadata 可决定：
 | `argo/docs/deck/decisions.md` | C | 新增 DEC 条目（截断策略重设计）|
 | `argo/docs/deck/how.md` | C + A | 更新 postProcess 说明 + 6 工具策略表 |
 | `argo/docs/deck/what.md` | A | 更新契约（truncation 目录行为）|
-| `argo/docs/tasks/deck/builtinTool.md` | C + A | 测试场景表更新 + metadata 字段说明 |
+| `argo/docs/tasks/deck/builtin.md` | C + A | 测试场景表更新 + metadata 字段说明 |
 | `argo/deck/types.go` | B + A | 新增 `TruncationStrategy` 类型 + 常量 |
 | `argo/deck/postprocess.go` | B | 函数签名改 + 移除组合逻辑 + 新 metadata |
-| `argo/deck/builtinTool.go` | A | Execute 实现 truncation 目录 + metadata |
+| `argo/deck/builtin.go` | A | Execute 实现 truncation 目录 + metadata |
 | `argo/deck/tools/builtin/*.go`（bash/read/grep/glob/write/edit）| A | 每个工具声明自己的 TruncationStrategy |
 | `argo/deck/postprocess_test.go` | B + A | 拆 head/tail 测试组 + metadata 断言 + truncation 目录测试 |
-| `argo/deck/builtinTool_test.go` | B + A | PostProcess 测试改 + metadata 字段断言 |
-| `argo/deck/builtinTool_*.go`（6 个工具的测试）| A | 各自加 truncation 行为测试 |
-| `argo/docs/tasks/deck/builtinTool.test-review.md` | B + A | 记录重构决策（与 R1/R2/R3 并列）|
+| `argo/deck/builtin_test.go` | B + A | PostProcess 测试改 + metadata 字段断言 |
+| `argo/deck/builtin_*.go`（6 个工具的测试）| A | 各自加 truncation 行为测试 |
+| `argo/docs/tasks/deck/builtin.test-review.md` | B + A | 记录重构决策（与 R1/R2/R3 并列）|
 
 ---
 

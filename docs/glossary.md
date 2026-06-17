@@ -11,8 +11,8 @@ Go 编译器行为：`import _ "pkg"` 只执行 `pkg` 的 `init()`，不引用�
 package tools
 
 import (
-    _ "argo/deck/tools/bash"   // 仅触发 init() 中的 registry.Register()
-    _ "argo/deck/tools/read"
+    _ "argo/deck/tools/builtin/bash"   // 仅触发 init() 中的 registry.Register()
+    _ "argo/deck/tools/builtin/read"
 )
 ```
 

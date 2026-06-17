@@ -3,6 +3,7 @@ package deck
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 // ToolSource 表示工具的注册来源。
@@ -85,4 +86,49 @@ type mcpTool struct {
 	inputSchema json.RawMessage
 	manager     *MCPManager
 	concurrency ConcurrencyMode
+}
+
+// TruncationStrategy 表示截断策略枚举。
+type TruncationStrategy int
+
+const (
+	TruncationHead         TruncationStrategy = iota // 保留前部
+	TruncationTail                                   // 保留尾部
+	TruncationHeadAndTail                            // 保留头尾
+)
+
+// String 返回截断策略的字符串表示，用于 metadata 写入与 JSON 序列化。
+func (s TruncationStrategy) String() string {
+	switch s {
+	case TruncationHead:
+		return "head"
+	case TruncationTail:
+		return "tail"
+	case TruncationHeadAndTail:
+		return "HeadAndTail"
+	default:
+		return "unknown"
+	}
+}
+
+// TruncationConfig 定义截断行为的可配置参数。
+// Ratio 和 TailRatio 为 1~80 的整数百分点（含义"保留 N% 字符"），详见 DEC-010。
+type TruncationConfig struct {
+	Strategy  TruncationStrategy `json:"strategy"`
+	Ratio     int                `json:"ratio"`
+	TailRatio int                `json:"tail_ratio"`
+}
+
+// Validate 校验 TruncationConfig 的合法性。
+// Ratio 必须 > 0 且 ≤ 80（百分点整数）；HeadAndTail 策略下 TailRatio 同样校验。
+func (c TruncationConfig) Validate() error {
+	if c.Ratio <= 0 || c.Ratio > 80 {
+		return fmt.Errorf("ratio must be in (0, 80] (percent), got %d", c.Ratio)
+	}
+	if c.Strategy == TruncationHeadAndTail {
+		if c.TailRatio <= 0 || c.TailRatio > 80 {
+			return fmt.Errorf("tail_ratio must be in (0, 80] (percent), got %d", c.TailRatio)
+		}
+	}
+	return nil
 }

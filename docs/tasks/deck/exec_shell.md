@@ -1,6 +1,6 @@
 ---
 module: deck
-function: execShell
+function: exec_shell
 layer: 0
 status: code_done
 depends_on:
@@ -10,7 +10,7 @@ depends_on:
     - os/exec（标准库）
 ---
 
-# deck::execShell
+# deck::exec_shell
 
 ## 职责
 
@@ -42,8 +42,8 @@ func execShell(ctx context.Context, binary string, args ...string) ToolResult
 
 ## 实现状态
 
-- 实现文件: deck/execShell.go
-- 测试文件: deck/execShell_test.go
+- 实现文件: deck/exec_shell.go
+- 测试文件: deck/exec_shell_test.go
 - 测试结果: 7/7 全部通过
 - 实现要点:
   - 空 binary 直接返回 Status="error"，不 panic

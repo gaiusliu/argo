@@ -4,8 +4,8 @@ interface: Tool
 layer: 0
 status: code_done
 implemented_by:
-  - docs/tasks/deck/builtinTool.md
-  - docs/tasks/deck/cliTool.md
+  - docs/tasks/deck/builtin.md
+  - docs/tasks/deck/cli.md
   - docs/tasks/deck/mcpTool.md
 ---
 

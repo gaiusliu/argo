@@ -1,6 +1,6 @@
 ---
 module: deck
-function: paramsToArgs
+function: params_to_args
 layer: 0
 status: code_done
 depends_on:
@@ -8,7 +8,7 @@ depends_on:
   external: []
 ---
 
-# deck::paramsToArgs
+# deck::params_to_args
 
 ## 职责
 

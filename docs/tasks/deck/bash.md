@@ -6,7 +6,7 @@ status: pending_test
 depends_on:
   internal:
     - Register（deck 包，task: ../Register.md）
-    - builtinTool（deck 包，task: ../builtinTool.md）
+    - builtinTool（deck 包，task: ../builtin.md）
   external:
     - os/exec（标准库）
 ---
@@ -36,7 +36,7 @@ func(ctx context.Context, params map[string]any) (deck.ToolResult, error)
 - `deck.ToolResult` · `deck.Concurrent` — deck 包导出类型
 
 ### 待实现（需等待）
-- `deck.builtinTool` 的 Execute 方法（task: [../builtinTool.md](builtinTool.md)）
+- `deck.builtinTool` 的 Execute 方法（task: [../builtin.md](builtin.md)）
 
 ## 测试场景
 
