@@ -149,6 +149,7 @@
 
 - **判定**：✅ 接受
 - **方案**：最稳妥
+- **用户审阅**：✅ 已审阅（2026-06-18）— 确认 mockWriter 字段仅存在于 test 文件不污染逻辑代码，全局变量单例模式无并发隐患，方案通过。
   1. mockWriter 增加 `callCount int`、`lastContent string`、`lastPath string` 三个字段，`Write` 方法中更新；
   2. `TestPostProcess_Metadata_Truncated` 末尾追加断言 `mw.callCount == 1` 且 `mw.lastContent == input.Output`；
   3. `TestPostProcess_Marker_TruncationPath` 中追加断言 `mw.lastPath == fullPath`（即 marker 中的路径必须等于 Writer.Write 实际返回的路径），切断硬编码耦合；
@@ -161,6 +162,7 @@
 
 - **判定**：✅ 接受
 - **方案**：最稳妥（与问题1联动）
+- **用户审阅**：✅ 已审阅（2026-06-18）— 随机化路径 + lastPath 对比，防止逻辑代码偷懒硬编码路径蒙混过关，方案通过。
   1. `newMockWriter()` 中 dir 使用带随机后缀的路径（如 `fmt.Sprintf("/fake/truncation-%d", time.Now().UnixNano())`），确保每次测试 run 的路径不同，使硬编码无法恰好命中；
   2. 配合问题1的 `lastPath` 字段，在 `TestPostProcess_Marker_TruncationPath` 中验证 marker 内路径与 `mw.lastPath` 严格相等；
   3. `TestPostProcess_Metadata_Truncated` 中验证 `full_output_path == mw.lastPath`（而非仅 `!= ""`）。
@@ -172,11 +174,17 @@
 
 - **判定**：⚠️ 部分接受
 - **方案**：最快
-  在 `post_process_test.go` 的 `TestMain` 或首个测试函数中设置 `t.Setenv("HOME", t.TempDir())`，将 `os.UserHomeDir()` 返回值隔离到测试临时目录，防止 CI 沙箱环境触碰真实用户目录。
+   在 `post_process_test.go` 的 `TestMain` 或首个测试函数中设置 `t.Setenv("HOME", t.TempDir())`，将 `os.UserHomeDir()` 返回值隔离到测试临时目录，防止 CI 沙箱环境触碰真实用户目录。
 - **理由**：
   - 问题根因在 `post_process.go` 包级变量初始化逻辑（实现层），非测试代码责任；
   - 但测试可在不修改实现的前提下加环境隔离，成本极低；
   - 最稳妥方案（`sync.Once` 惰性初始化）属于实现层重构，应由 gen-code 阶段处理，gen-test 不越界。
+- **用户审阅**：❌ 不采纳 — 问题根因不成立（2026-06-18）
+  - `NewDefault()` 在 init 阶段只拼路径字符串（`filepath.Join`），不建目录、不写文件、不 panic，**零副作用**；
+  - `os.UserHomeDir()` 返回 error 时有 `os.TempDir()` 兜底，不会崩；
+  - `t.Setenv` 无法回溯影响包级变量初始化（Go 初始化顺序：包级变量 → init() → TestMain → 测试函数），对当前场景无效；
+  - 真正的风险（生产环境 Write 失败）已有降级方案：marker 不含 path 段 + Logf warn（DEC-012 第 4 节）；
+  - 惰性初始化不解决 Write 失败问题，只延后触发时机，非此场景需要。
 
 ---
 
