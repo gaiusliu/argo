@@ -13,51 +13,24 @@ Argo 是一个用 Go 实现的极简 AI Agent 框架。六个模块 (deck/helm/r
 
 ## 模块拆分
 
-| 模块 | 职责 | 技术形态 | 设计状态 |
-|------|------|---------|---------|
-| **deck** | 工具注册、发现、调用。统一内部工具/外部CLI/MCP三种来源 | Go 自由函数 + 接口 | 详细设计完成 |
-| **helm** | Agent 主循环。用户输入→LLM→工具→结果→循环 | Go 自由函数 + channel 流式输出 | 详细设计完成 |
-| **reef** | 会话上下文压缩。token超限时裁剪旧消息、生成LLM摘要 | Go 代码固化流程骨架，SKILL.md 定义摘要模板 | 详细设计完成 |
-| **vault** | 对话记录持久化(transcript) + 跨会话长期记忆 | Go 文件/存储操作 | 详细设计完成 |
-| **sail** | 多模型API管理。屏蔽Anthropic/OpenAI/DeepSeek等差异 | Go 接口 + adapter模式 | 待设计 |
-| **crew** | SKILL.md技能加载与调度。渐进式披露注入system prompt | Go 文件扫描 + SKILL.md解析 | 详细设计完成 |
+| 模块 | 职责 | 技术形态 |
+|------|------|---------|
+| **deck** | 工具注册、发现、调用。统一内置工具和CLI外部工具两种来源 | Go 接口 + 注册表 |
+| **helm** | Agent 主循环。用户输入→LLM→工具→结果→循环 | Go 自由函数 + channel 流式输出 |
+| **reef** | 会话上下文压缩。token超限时裁剪旧消息、生成LLM摘要 | Go 代码固化流程骨架，SKILL.md 定义摘要模板 |
+| **vault** | 对话记录持久化(transcript) + 跨会话长期记忆 | Go 文件/存储操作 |
+| **sail** | 多模型API管理。屏蔽Anthropic/OpenAI/DeepSeek等差异 | Go 接口 + adapter模式 |
+| **crew** | SKILL.md技能加载与调度。渐进式披露注入system prompt | Go 文件扫描 + SKILL.md解析 |
 
 ## 跨模块接口契约
 
-```go
-// 以下接口由 helm（消费者）定义，各模块提供实现
+各模块接口由 helm（消费者）定义，对应模块提供实现：
 
-// Tools — deck 模块实现
-type Tools interface {
-    List() []Tool
-    Lookup(ctx context.Context, name string) (Tool, bool)
-    ExecuteBatch(ctx context.Context, calls []ToolCall) []ToolResult
-}
-
-// Compactor — reef 模块实现
-type Compactor interface {
-    Compact(ctx context.Context, messages []Message, window TokenLimit) (CompactResult, error)
-}
-
-// LLM — sail 模块实现
-type LLM interface {
-    Chat(ctx context.Context, req ChatRequest) (<-chan Event, error)
-    Window() TokenLimit
-}
-
-// Memory — vault 模块实现
-type Memory interface {
-    Append(ctx context.Context, messages []Message) error           // 写入对话记录
-    Recall(ctx context.Context, query string) (*MemoryEntry, error) // 检索长期记忆
-    Store(ctx context.Context, content string) error                // 写入长期记忆
-}
-
-// Skills — crew 模块实现
-type Skills interface {
-    List(ctx context.Context) []SkillInfo
-    Instructions(ctx context.Context, name string) string
-}
-```
+- **deck → Tools**：List() 列出全部工具、Lookup(name) 按名查找。工具执行通过 Tool 接口直接调用，不经过中间层
+- **reef → Compactor**：Compact(messages, tokenLimit) 接收消息历史 + 窗口上限，返回裁剪/摘要后的消息
+- **vault → Memory**：Append 写入对话记录、Recall 检索长期记忆、Store 写入长期记忆
+- **sail → LLM**：Chat(request) 统一 LLM 调用，返回流式 Event channel，Window() 返回 token 上限
+- **crew → Skills**：List() 列出可用 Skill、Instructions(name) 返回特定 Skill 的指令文本
 
 ## 数据流
 
@@ -66,9 +39,8 @@ type Skills interface {
 ```
 argo run / argo serve
   │
-  ├── deck  注册 → import tools/builtin 触发 init() 自注册
-  │               → 读 ~/.argo/tools.json → 注册外部 CLI 工具
-  │               → spawn MCP 子进程 → 注册 MCP 工具
+  ├── deck  注册 → 内置工具显式注册（builtin 优先）
+  │               → 读 ~/.argo/config.json → 校验并注册外部 CLI 工具
   ├── vault  初始化 → 创建/打开 session 目录
   ├── reef   就绪 → 等待 helm 调用
   ├── crew 扫描 → 加载 ~/.argo/skills/ 下的 SKILL.md
@@ -109,7 +81,7 @@ helm.runLoop()
 
 ```
 ~/.argo/
-├── tools.json                 // deck: 外部 CLI + MCP 工具配置
+├── config.json                // deck: 外部 CLI 工具配置
 ├── profile.md                 // vault: 用户画像/偏好（LLM 维护，5K 预算）
 ├── AGENTS.md                  // vault: 硬性约束（用户管理，LLM 只读）
 ├── sessions/
@@ -126,11 +98,12 @@ argo/
 ├── cmd/
 │   ├── run/                   // CLI 入口
 │   └── serve/                 // Gateway 入口
-├── deck/                      // 工具管理模块
-├── helm/                      // Agent 循环模块
-├── reef/                      // 上下文压缩模块
-├── vault/                     // 存储模块（待设计）
-├── sail/                      // 模型管理模块（待设计）
-├── crew/                   // 技能管理模块（待设计）
+├── src/
+│   ├── deck/                  // 工具管理模块
+│   ├── helm/                  // Agent 循环模块
+│   ├── reef/                  // 上下文压缩模块
+│   ├── vault/                 // 存储模块
+│   ├── sail/                  // 模型管理模块
+│   └── crew/                  // 技能管理模块
 └── docs/                      // 设计文档
 ```
