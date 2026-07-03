@@ -11,3 +11,8 @@
 这样避免：
 - Standards 子代理对 .md 文档报告无意义的代码坏味
 - Spec 子代理用自己的文档变更去"匹配"规格（循环审查）
+
+## commit message 规范
+
+- 不使用 `Co-Authored-By` 署名
+- message 使用中文描述
