@@ -407,6 +407,6 @@ func lookupHandler(ctx context.Context, params map[string]any) (ToolResult, erro
 	if !ok {
 		return ToolResult{Status: StatusError, Output: "tool not found: " + name}, fmt.Errorf("lookup: tool not found: %s", name)
 	}
-	out := fmt.Sprintf("name: %s\ndescription: %s\nsource: %d\n", t.Name(), t.Description(), t.Source())
+	out := fmt.Sprintf("name: %s\ndescription: %s\n", t.Name(), t.Description())
 	return ToolResult{Status: StatusSuccess, Output: out}, nil
 }

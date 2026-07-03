@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 )
 
 // 截断阈值
@@ -13,6 +16,51 @@ const (
 	keepLen         = 16_000 // HeadTail 模式保留的字符总数
 	truncatedMarker = "... (truncated) ..."
 )
+
+// TruncationMeta 截断元数据，供 helm 等调用方读取截断信息
+type TruncationMeta struct {
+	Truncated bool
+	Key       string
+}
+
+// cleanupOldFiles 清理过期的截断原文文件（TTL：7 天）
+// 过期时间从文件名中内嵌的时间戳解码，比依赖文件 mtime 更可靠
+func cleanupOldFiles(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	for _, e := range entries {
+		name := e.Name()
+		// 文件名格式: argo-<timestamp_ms_hex>-<random_hex>
+		if !strings.HasPrefix(name, "argo-") {
+			continue
+		}
+		ts, err := decodeFileTimestamp(name)
+		if err != nil {
+			continue
+		}
+		if ts.Before(cutoff) {
+			os.Remove(filepath.Join(dir, name))
+		}
+	}
+}
+
+// decodeFileTimestamp 从文件名中解码毫秒时间戳
+func decodeFileTimestamp(name string) (time.Time, error) {
+	// argo-<timestamp_ms_hex>-<random_hex>
+	hex := strings.TrimPrefix(name, "argo-")
+	idx := strings.IndexByte(hex, '-')
+	if idx < 0 {
+		return time.Time{}, fmt.Errorf("invalid filename")
+	}
+	ms, err := strconv.ParseInt(hex[:idx], 16, 64)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.UnixMilli(ms), nil
+}
 
 // truncate 按 HeadTail 策略截断文本，尝试持久化原文
 // store 失败不影响截断——LLM 仍拿到截断版本，仅不包含原文路径
@@ -40,15 +88,20 @@ func store(text string) (string, error) {
 		return "", fmt.Errorf("store failed: %w", err)
 	}
 
-	// 随机文件名，防止冲突
-	name := make([]byte, 16)
-	if _, err := rand.Read(name); err != nil {
+	// 写入前顺手清理过期文件
+	cleanupOldFiles(dir)
+
+	// 文件名格式: argo-<timestamp_ms_hex>-<random_hex>
+	// 时间戳内嵌在文件名中，比依赖 mtime 更可靠的过期判断
+	ts := time.Now().UnixMilli()
+	randBytes := make([]byte, 8)
+	if _, err := rand.Read(randBytes); err != nil {
 		return "", fmt.Errorf("store failed: %w", err)
 	}
 
 	// 0644：父目录已 0700 限制了外部访问，此处的文件无需更严。
 	// owner 可读写，便于用户直接 cat/less 查看完整输出。
-	path := filepath.Join(dir, fmt.Sprintf("%x", name))
+	path := filepath.Join(dir, fmt.Sprintf("argo-%x-%x", ts, randBytes))
 	if err := os.WriteFile(path, []byte(text), 0644); err != nil {
 		return "", fmt.Errorf("store failed: %w", err)
 	}
@@ -67,11 +120,9 @@ func postProcess(result ToolResult) ToolResult {
 	if result.Metadata == nil {
 		result.Metadata = make(map[string]any)
 	}
-	result.Metadata["truncated"] = true
+	meta := TruncationMeta{Truncated: true, Key: key}
 	result.Output = truncated
-	if key != "" {
-		result.Metadata["truncation_key"] = key
-	}
+	result.Metadata["truncation"] = meta
 
 	return result
 }

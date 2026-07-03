@@ -6,11 +6,20 @@ import (
 	"sync"
 )
 
-var (
-	regMu    sync.RWMutex
+// ToolRegistry 管理工具注册表，支持并发安全读写
+type ToolRegistry struct {
+	mu       sync.RWMutex
 	tools    []Tool
-	toolsIdx = make(map[string]int) // name → index in tools
-)
+	toolsIdx map[string]int
+}
+
+// NewToolRegistry 创建空的工具注册表——测试等场景可使用独立实例
+func NewToolRegistry() *ToolRegistry {
+	return &ToolRegistry{toolsIdx: make(map[string]int)}
+}
+
+// 包级默认注册表实例
+var defaultRegistry = NewToolRegistry()
 
 type ToolSource int
 
@@ -39,76 +48,118 @@ type ToolResult struct {
 	Metadata map[string]any
 }
 
+// List 返回注册表中所有工具的切片
 func List() []Tool {
-	regMu.RLock()
-	defer regMu.RUnlock()
-	return tools
+	return defaultRegistry.List()
 }
 
+// Lookup 按名称查找工具
 func Lookup(name string) (Tool, bool) {
-	regMu.RLock()
-	defer regMu.RUnlock()
-	i, ok := toolsIdx[name]
+	return defaultRegistry.Lookup(name)
+}
+
+// --- ToolRegistry 方法 ---
+
+// List 返回注册表中所有工具的切片
+func (r *ToolRegistry) List() []Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.tools
+}
+
+// Lookup 按名称精确匹配工具，O(1)
+func (r *ToolRegistry) Lookup(name string) (Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	i, ok := r.toolsIdx[name]
 	if !ok {
 		return nil, false
 	}
-	return tools[i], true
+	return r.tools[i], true
+}
+
+// RegisterTool 注册工具到默认注册表
+func RegisterTool(t Tool) error {
+	return defaultRegistry.RegisterTool(t)
+}
+
+// resolveConflict 处理工具注册冲突：builtin 覆盖 CLI（返回 nil），其他情况返回错误
+func resolveConflict(existing, incoming Tool) error {
+	if incoming.Source() == SourceBuiltin && existing.Source() == SourceCLI {
+		return nil
+	}
+	if incoming.Source() == SourceBuiltin {
+		return fmt.Errorf("builtin tool %q already registered", incoming.Name())
+	}
+	return fmt.Errorf("CLI tool %q conflicts with builtin tool", incoming.Name())
 }
 
 // RegisterTool 注册工具。builtin 优先：与内置工具同名的 CLI 工具会被拒绝
-func RegisterTool(t Tool) error {
-	regMu.Lock()
-	defer regMu.Unlock()
+func (r *ToolRegistry) RegisterTool(t Tool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	if i, ok := toolsIdx[t.Name()]; ok {
-		existing := tools[i]
-		// builtin 覆盖 CLI：builtin 优先
-		if t.Source() == SourceBuiltin && existing.Source() == SourceCLI {
-			tools[i] = t
-			return nil
+	if i, ok := r.toolsIdx[t.Name()]; ok {
+		existing := r.tools[i]
+		// 冲突解决
+		if err := resolveConflict(existing, t); err != nil {
+			return err
 		}
-		// 其余情况均为冲突
-		if t.Source() == SourceBuiltin {
-			return fmt.Errorf("builtin tool %q already registered", t.Name())
-		}
-		return fmt.Errorf("CLI tool %q conflicts with builtin tool", t.Name())
+		// builtin 覆盖 CLI
+		r.tools[i] = t
+		return nil
 	}
 
-	toolsIdx[t.Name()] = len(tools)
-	tools = append(tools, t)
+	r.toolsIdx[t.Name()] = len(r.tools)
+	r.tools = append(r.tools, t)
 	return nil
 }
 
+// RegisterTools 默认注册流程：先注册内置工具，再加载外部 CLI 工具
 func RegisterTools() error {
+	return defaultRegistry.RegisterTools()
+}
+
+// RegisterTools 先注册内置工具（遇错即停），再注册 CLI 工具（校验/冲突不打断，收尾汇总）
+func (r *ToolRegistry) RegisterTools() error {
+	// 内置工具：单个失败即代码 bug，应立即暴露
 	for _, bt := range builtinTools {
-		if err := RegisterTool(bt); err != nil {
+		if err := r.RegisterTool(bt); err != nil {
 			return fmt.Errorf("register tools failed: %w", err)
 		}
 	}
 
-	// 读配置，校验CLI工具参数
+	// 读配置——找不到或解析不了则直接报错（基础设施问题）
 	cfgPath, err := ConfigPath()
 	if err != nil {
 		return fmt.Errorf("register tools failed: %w", err)
 	}
-
 	cfg, err := LoadConfig(cfgPath)
 	if err != nil {
 		return fmt.Errorf("register tools failed: %w", err)
 	}
 
-	if errs := ValidateConfig(cfg); len(errs) > 0 {
-		return fmt.Errorf("register tools failed: %v", errs)
-	}
-
-	// 校验通过后逐条注册 CLI 工具
+	// 逐条校验 + 注册，跳过有问题的工具，错误收尾汇总
+	var skipped []error
 	for name, e := range cfg.CLI {
-		if err := RegisterTool(cliTool{
+		verrs := validateCLIEntry(name, e)
+		if len(verrs) > 0 {
+			for _, verr := range verrs {
+				skipped = append(skipped, fmt.Errorf("validate %s: %w", name, verr))
+			}
+			continue
+		}
+		if err := r.RegisterTool(cliTool{
 			name:        name,
 			description: e.Description,
 		}); err != nil {
-			return fmt.Errorf("register tools failed: %w", err)
+			skipped = append(skipped, err)
 		}
 	}
+
+	if len(skipped) > 0 {
+		return fmt.Errorf("register tools failed: %v", skipped)
+	}
+
 	return nil
 }

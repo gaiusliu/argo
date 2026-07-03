@@ -40,6 +40,30 @@
 
 **背景**：工具输出可能超出上下文窗口。参考 Claude Code（30K 字符）、Kilo Code / OpenCode（50KB）、Codex（10KB），选 30K 为默认上限。
 
-**选择**：HeadTail 策略——保留头尾各 8K 字符，中间插入 `... (truncated)...` 标记。截断后结果直接返回 LLM，原文异步写入 `os.TempDir()/argo-truncation/`。
+**选择**：HeadTail 策略——保留头尾各 8K 字符，中间插入 `... (truncated)...` 标记。截断后结果直接返回 LLM，原文写入 `os.TempDir()/argo-truncation/`。截断文件保留 7 天，文件名内嵌毫秒时间戳（格式 `argo-<ts_ms_hex>-<random_hex>`），清理时从文件名解码时间戳判断过期——比依赖文件 mtime 更可靠，不受 touch/复制影响。
 
 **未来方向**：支持 `head`、`tail`、`head_tail` 三策略可配置，以及自定义阈值。
+
+## DEC-004：注册容错策略——内置严格、CLI 宽松
+
+**状态**：✅ 现行
+
+**日期**：2026-07-03
+
+**决策**：`RegisterTools()` 内置工具注册遇错即停（代码 bug 应立即暴露），CLI 工具校验失败和注册冲突跳过当前工具、继续注册后续，所有错误收尾汇总返回。
+
+**背景**：原实现中 CLI 工具校验不通过或注册冲突即 `return err`，导致所有未注册的 CLI 工具全部丢弃。用户可能只配错了一个工具，却导致所有外部工具不可用。
+
+**选择**：内置工具仍保持严格（单个失败即 panic 级别的 bug），CLI 工具改为宽松——validateCLIEntry 失败或 RegisterTool 冲突时，将该工具错误记入 `skipped` 列表，`continue` 注册下一个。全部注册完后若 `len(skipped) > 0` 则汇总返回。
+
+## DEC-005：ToolRegistry 封装——保留包级 API 的向后兼容
+
+**状态**：✅ 现行
+
+**日期**：2026-07-03
+
+**决策**：将包级全局变量 `regMu`/`tools`/`toolsIdx` 封装为 `ToolRegistry` 结构体，同时保留 `List()`/`Lookup()`/`RegisterTool()`/`RegisterTools()` 包级便捷函数，委托到 `defaultRegistry` 单例。暴露 `NewToolRegistry()` 供测试创建独立实例。
+
+**背景**：包级全局可变状态导致：测试间状态污染不支持 `t.Parallel()`、无法创建多实例（如热重载场景）、并发测试数据竞争。
+
+**选择**：折中方案——不追求完全消除全局状态（会破坏所有调用方），而是用结构体封装并发原语，包级函数保持向下兼容。测试可通过 `NewToolRegistry()` 获得完全隔离的注册表。
