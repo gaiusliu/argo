@@ -192,9 +192,9 @@
 
 **选择**：MVP 先不处理。如果后续搜索端点变更返回格式导致 JSON 解析失败，再加 SSE 容错逻辑。
 
-**优先级**：低于 DEC-016（授权/询问能力优先于 SSE 解析）。
+**优先级**：低于 DEC-017（授权/询问能力优先于 SSE 解析）。
 
-## DEC-017：WebSearch MVP 阶段只暴露 query 参数
+## DEC-016：WebSearch MVP 阶段只暴露 query 参数
 
 **状态**：✅ 现行
 
@@ -208,7 +208,7 @@
 
 **未来方向**：按需暴露 `type` 和 `numResults`，`livecrawl` 和 `contextMaxCharacters` 用户极少需要调整。
 
-## DEC-016：deck MVP 阶段无权限/授权机制
+## DEC-017：deck MVP 阶段无权限/授权机制
 
 **状态**：✅ 现行
 
@@ -221,20 +221,6 @@
 **选择**：MVP 暂不加。权限系统涉及 Tool 接口扩展（需在 Execute 签名中加入 ask 回调或中断信号）、用户交互通道（CLI/网关模式不同）、规则持久化（配置文件或 session 级记忆），范围超出 deck 单模块。
 
 **未来方向**：在 deck 或 helm 层引入 ask 机制，参考 OpenCode 的 `ctx.ask({permission, patterns, always})` 模式。**优先于 SSE 解析等网络层增强。**
-
-## DEC-017：WebSearch MVP 阶段只暴露 query 参数
-
-**状态**：✅ 现行
-
-**日期**：2026-07-03
-
-**决策**：MVP 阶段 WebSearch 只接受 `query` 一个参数。`numResults`、`type`、`livecrawl`、`contextMaxCharacters` 等控制在 handler 内部写死默认值。
-
-**背景**：OpenCode 的 `websearch` 暴露了五个参数——`query`、`numResults`（默认8）、`type`（auto/fast/deep）、`livecrawl`（fallback/preferred）、`contextMaxCharacters`（默认10000）。这些参数让 LLM 能根据搜索场景调优（如快速浏览用 fast，深度研究用 deep）。Argo webSearchHandler 内部写死 `type=auto, numResults=8, livecrawl=fallback`，LLM 无法控制。
-
-**选择**：保持参数极简。理由：① MVP 阶段先验证搜索能力可用，默认参数已覆盖大多数场景；② 参数越多 LLM 的 system prompt 越冗长；③ 后续如果需要暴露参数，在 Tool 接口不变的前提下在 handler 内部提取即可。
-
-**未来方向**：按需暴露 `type` 和 `numResults`，`livecrawl` 和 `contextMaxCharacters` 用户极少需要调整。
 
 ## DEC-018：WebSearch 使用免费 MCP 端点，不自建爬虫
 
