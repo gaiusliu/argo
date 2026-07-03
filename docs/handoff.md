@@ -1,44 +1,77 @@
-# Handoff — helm 模块开发
+# Handoff — RunLoop 闭环完成
 
 ## 背景
 
-Argo（极简 AI Agent 运行基座）。deck 模块 MVP 已全部完成，进入 helm 模块。
+Argo（极简 AI Agent 运行基座）。5 个 Go 包，R eAct 核心循环已跑通（桩阶段）。
 
-## 已完成
+## 当前状态
 
-### deck 模块（001-deck-mvp）✅
+```
+src/
+├── knot/types.go      — 跨模块共享类型（12 个 Event 常量 + Message/ChatRequest/Event/ToolUse 等）
+├── deck/              — ✅ 工具管理 MVP（5 文件）
+├── sail/              — 🚧 桩
+│   ├── sail.go         — Chat()/Window() 桩
+│   └── config.go       — LoadConfig/DefaultModel/LookupModel + Provider/Model/Limit 配置结构
+├── reef/reef.go       — 🚧 桩，Compact() 原样返回
+└── helm/              — ✅ 核心循环
+    ├── loop.go         — RunLoop() 五步闭环
+    ├── prompt.go       — buildSystemPrompt() 四块拼装
+    ├── stream.go       — newEventChannel()
+    └── types.go        — TurnState（含 ModelName）
+```
 
-5 个源文件，~695 行 Go 代码（零外部依赖）：
+## RunLoop 五步
 
-- `src/deck/tool.go` — Tool 接口、List/Lookup（RWMutex + toolsIdx O(1)）、RegisterTool（冲突检查 + builtin 优先）
-- `src/deck/builtin_tool.go` — 8 个 handler（bash/read/write/edit/grep/glob/list/lookup）、resolveShell
-- `src/deck/tool_registry.go` — 配置文件加载、校验（`~/.argo/config.json`）
-- `src/deck/cli_tool.go` — CLI 工具委托 bashHandler + postProcess
-- `src/deck/truncation.go` — HeadTail 截断（30K 上限 / 16K 保留）、原文持久化
+```
+1. reef.Compact(ctx, messages, sail.Window(modelName))  ✅ 失败降级
+2. sail.Chat(ctx, state.ModelName, req)                 ✅ 桩返回 done
+3. 流式消费：累计 textDelta → assistant message         ✅
+            收集 toolUseStart                          ✅
+            转发所有事件到 out channel                   ✅
+4. 逐条 deck.Lookup + Tool.Execute + 发 toolUseDone     ✅
+5. assistant message + tool result 注入 state.Messages   ✅
+   无 tool_use → 退出；有 tool_use → 继续循环
+```
 
-3 条技术决策：DEC-001（grep 纯 Go）、DEC-002（--help 替代 Schema()）、DEC-003（HeadTail 截断）。
+## Event 类型（12 个）
+
+start / textStart / textDelta / textDone / thinkingStart / thinkingDelta / thinkingDone / toolUseStart / toolUseDelta / toolUseDone / done / error
+
+## 关键决策
+
+| 编号 | 决策 |
+|---|---|
+| - | 各模块包级单例（deck.List()、sail.Chat()），废弃 HelmDeps |
+| - | 跨模块类型统一进 knot 包 |
+| - | 模型选择权在 TurnState.ModelName，空值 = sail 取 config.json 的 model 字段 |
+| - | 出错的 event type 保留，不混入 done |
+| - | Event 字段精简为 Delta（text/thinking 共用）+ ToolUse + Done + Err |
 
 ## 下一步
 
-按模块依赖顺序进入 **helm 模块**（Agent 主循环）：
+### P0 — 让 sail 真正调用 LLM
 
-```
-deck ✅ → helm → reef → vault → sail → crew
-```
+- 实现 adapter（anthropic/openai/openai-compatible），把 HTTP SSE 流转为 knot.Event
+- 接上 models.json → config.json 的 provider 配置
 
-建议先阅读 [docs/modules/helm/](docs/modules/helm/) 和 [docs/how.md](docs/how.md)，然后创建 `docs/iterations/002-helm-mvp/` 迭代文档。
+### P1 — reef 压缩逻辑
+
+- shouldCompact 触发判定（80% 阈值）
+- findCutPoint 切割 + LLM 摘要生成
+
+### P2 — 其余模块
+
+- vault、crew 模块
+- cmd/run（CLI）、cmd/serve（Gateway）入口
 
 ## 关键参考
 
 | 文档 | 位置 |
 |---|---|
-| 技术架构 | [docs/how.md](docs/how.md) |
-| deck 迭代（完成） | [docs/iterations/001-deck-mvp/main.md](docs/iterations/001-deck-mvp/main.md) |
-| 技术决策 | [docs/decisions.md](docs/decisions.md) |
-| helm 模块设计 | [docs/modules/helm/](docs/modules/helm/) |
-| deck 源码 | `src/deck/`（5 文件，695 行） |
-
-## 建议技能
-
-- `grow-doc` — 新模块开发时记录决策和创建迭代文档
-- `code-review` — 提交前审查代码变更
+| 项目架构 | [docs/what.md](docs/what.md) / [docs/how.md](docs/how.md) |
+| 开发路线 | [docs/todo.md](docs/todo.md) |
+| helm 设计 | [docs/modules/helm/design.md](docs/modules/helm/design.md) |
+| helm 迭代 | [docs/iterations/002-helm-mvp/main.md](docs/iterations/002-helm-mvp/main.md) |
+| sail 设计 | [docs/modules/sail/](docs/modules/sail/)（what/how/decisions） |
+| Go 代码规范 | `go-styleguide/` |

@@ -10,7 +10,17 @@
       "Bash(git push)",
       "Bash(go build ./src/*)",
       "Bash(go vet ./src/*)",
-      "Bash(ls *)"
+      "Bash(cat -n *)",
+      "Bash(ls *)",
+      "Read(c:\\Users\\Gaiusliu\\Desktop\\code\\pi\\*)",
+      "Read(c:\\Users\\Gaiusliu\\Desktop\\code\\opencode\\*)",
+      "Read(c:\\Users\\Gaiusliu\\Desktop\\code\\kilocode\\*)",
+      "Glob(c:\\Users\\Gaiusliu\\Desktop\\code\\pi\\*)",
+      "Glob(c:\\Users\\Gaiusliu\\Desktop\\code\\opencode\\*)",
+      "Glob(c:\\Users\\Gaiusliu\\Desktop\\code\\kilocode\\*)",
+      "Grep(*c:\\Users\\Gaiusliu\\Desktop\\code\\pi\\*)",
+      "Grep(*c:\\Users\\Gaiusliu\\Desktop\\code\\opencode\\*)",
+      "Grep(*c:\\Users\\Gaiusliu\\Desktop\\code\\kilocode\\*)"
     ]
   }
 }

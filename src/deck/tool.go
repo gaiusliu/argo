@@ -8,14 +8,13 @@ import (
 
 // ToolRegistry 管理工具注册表，支持并发安全读写
 type ToolRegistry struct {
-	mu       sync.RWMutex
-	tools    []Tool
-	toolsIdx map[string]int
+	mu    sync.RWMutex
+	tools map[string]Tool
 }
 
 // NewToolRegistry 创建空的工具注册表——测试等场景可使用独立实例
 func NewToolRegistry() *ToolRegistry {
-	return &ToolRegistry{toolsIdx: make(map[string]int)}
+	return &ToolRegistry{tools: make(map[string]Tool)}
 }
 
 // 包级默认注册表实例
@@ -64,18 +63,19 @@ func Lookup(name string) (Tool, bool) {
 func (r *ToolRegistry) List() []Tool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.tools
+	result := make([]Tool, 0, len(r.tools))
+	for _, t := range r.tools {
+		result = append(result, t)
+	}
+	return result
 }
 
 // Lookup 按名称精确匹配工具，O(1)
 func (r *ToolRegistry) Lookup(name string) (Tool, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	i, ok := r.toolsIdx[name]
-	if !ok {
-		return nil, false
-	}
-	return r.tools[i], true
+	t, ok := r.tools[name]
+	return t, ok
 }
 
 // RegisterTool 注册工具到默认注册表
@@ -99,19 +99,12 @@ func (r *ToolRegistry) RegisterTool(t Tool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if i, ok := r.toolsIdx[t.Name()]; ok {
-		existing := r.tools[i]
-		// 冲突解决
+	if existing, ok := r.tools[t.Name()]; ok {
 		if err := resolveConflict(existing, t); err != nil {
 			return err
 		}
-		// builtin 覆盖 CLI
-		r.tools[i] = t
-		return nil
 	}
-
-	r.toolsIdx[t.Name()] = len(r.tools)
-	r.tools = append(r.tools, t)
+	r.tools[t.Name()] = t
 	return nil
 }
 
@@ -149,7 +142,7 @@ func (r *ToolRegistry) RegisterTools() error {
 			}
 			continue
 		}
-		if err := r.RegisterTool(cliTool{
+		if err := r.RegisterTool(&cliTool{
 			name:        name,
 			description: e.Description,
 		}); err != nil {

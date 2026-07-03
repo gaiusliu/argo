@@ -19,7 +19,8 @@ flowchart LR
 
 - [x] deck — 工具管理模块：工具的注册、发现、调用，统一内置工具与 CLI 外部工具
 - [ ] vault — FileVault 默认文件系统实现、transcript.jsonl 追加写入（6 种 type）、profile.md 读写与预算控制 / AGENTS.md 只读加载
-- [ ] sail — models.json 配置加载与自动生成、anthropic / openai / openai-compatible 三个 provider adapter、错误分类
+- [x] sail — 桩阶段完成：Chat() / Window() / DefaultModel() + config.json 三层 provider 配置解析
+- [ ] sail — 后续：anthropic / openai / openai-compatible adapter + 错误分类
 - [ ] crew — SKILL.md 文件扫描、YAML frontmatter 解析、List / Instructions 渐进式披露接口
 
 ## 阶段 2：上下文压缩 — reef
@@ -36,7 +37,8 @@ flowchart LR
 
 ### 模块目标
 
-- [ ] reef — Compact() 入口、shouldCompact 触发判定（80% 阈值）、findCutPoint 切割算法、LLM 摘要生成与错误降级、消息重组
+- [x] reef — Compact() 桩（原样返回）
+- [ ] reef — 后续：shouldCompact 触发判定（80% 阈值）、findCutPoint 切割算法、LLM 摘要生成与错误降级、消息重组
 
 ## 阶段 3：核心循环 — helm
 
@@ -55,7 +57,7 @@ flowchart LR
 
 ### 模块目标
 
-- [ ] helm — runLoop() 核心循环（会话级缓存 system prompt + tools）、buildSystemPrompt() 多源拼装、channel 流式事件推送（text_delta / tool_use / done / error）
+- [x] helm — RunLoop() 五步闭环（Compact → Chat → 消费 → 执行 → 注入），12 种流式事件，五步桩阶段闭环
 
 ## 阶段 4：双入口与集成 — cmd
 

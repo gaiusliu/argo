@@ -19,15 +19,15 @@ type builtinTool struct {
 	handler     func(ctx context.Context, params map[string]any) (ToolResult, error)
 }
 
-func (bt builtinTool) Name() string        { return bt.name }
-func (bt builtinTool) Description() string { return bt.description }
-func (bt builtinTool) Source() ToolSource  { return SourceBuiltin }
-func (bt builtinTool) Execute(ctx context.Context, params map[string]any) (ToolResult, error) {
+func (bt *builtinTool) Name() string        { return bt.name }
+func (bt *builtinTool) Description() string { return bt.description }
+func (bt *builtinTool) Source() ToolSource  { return SourceBuiltin }
+func (bt *builtinTool) Execute(ctx context.Context, params map[string]any) (ToolResult, error) {
 	result, err := bt.handler(ctx, params)
 	return postProcess(result), err
 }
 
-var builtinTools = []builtinTool{
+var builtinTools = []*builtinTool{
 	{name: "bash", description: "Executes shell commands and returns combined output", handler: bashHandler},
 	{name: "read", description: "Reads file contents with line numbers, supports offset/limit paging", handler: readHandler},
 	{name: "write", description: "Creates or overwrites a file at the given path", handler: writeHandler},

@@ -77,10 +77,10 @@ helm 调用 Compact(messages, window)
   │     → head（旧消息，进压缩）+ tail（最近消息，完整保留）
   │
   ├── 3. buildCompactPrompt()
-  │     deps.Crew.Load("reef-compact") → 摘要模板
+  │     crew.Load("reef-compact") → 摘要模板
   │     拼接：head 消息 + 模板 → 完整 prompt
   │
-  ├── 4. deps.Sail.Chat()（优先默认模型，失败重试，最后兜底备用模型）
+  ├── 4. sail.Chat()（优先默认模型，失败重试，最后兜底备用模型）
   │     ├── 鉴权失败 / token 额度耗尽 → 显式通知用户，等待回应
   │     ├── 其他错误 → 等待 1s → 重试（同模型）
   │     ├── 重试仍失败 → 切换备用模型/备用厂商

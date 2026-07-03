@@ -69,11 +69,11 @@ Argo 整体是一个极简 AI Agent 运行基座，六个模块各自独立、�
 
 ### Compact 协议
 
-- 由 reef 定义，helm 消费
-- 接口：`Compact(messages []Message, window TokenLimit) ([]Message, error)`
+- 由 reef 提供，helm 调用 `Compact(ctx, messages, tokenLimit)`
 - 输入：当前消息历史 + 模型的 context window 上限
-- 输出：裁剪后的消息历史（保留 system prompt + 最近 N 轮，最早的消息被截断或摘要替换）
+- 输出：裁剪后的消息历史
 - reef 的具体压缩策略（截断 / 摘要 / 折叠）是内部实现，helm 不感知
+- 失败降级使用原始消息，不阻塞循环
 
 ### Memory 协议
 
@@ -85,11 +85,10 @@ Argo 整体是一个极简 AI Agent 运行基座，六个模块各自独立、�
 
 ### Model 协议
 
-- 由 sail 定义，helm 消费
-- 统一调用接口：`Chat(messages []Message, tools []Tool, options ChatOptions) (*ChatResponse, error)`
-- ChatOptions SHALL 支持：model 选择、temperature、max_tokens
-- ChatResponse SHALL 包含：文本回复、工具调用请求列表（如有）、token 用量
-- sail 屏蔽 OpenAI / Anthropic / DeepSeek 等不同 API 的差异，对 helm 暴露一致的调用面
+- 由 sail 提供，helm 调用 `Chat(ctx, modelName, req)` → `<-chan Event`
+- modelName 为空时 sail 取 config.json 默认模型
+- sail 通过 `Window(modelName)` 返回 context window 上限
+- sail 屏蔽不同 provider API 差异，对 helm 暴露一致的流式 Event 面
 
 ### Skill 协议
 

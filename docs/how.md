@@ -2,7 +2,7 @@
 
 ## 概述
 
-Argo 是一个用 Go 实现的极简 AI Agent 框架。六个模块 (deck/helm/reef/vault/sail/crew) 通过接口注入协作，同一份核心代码编译为 CLI 和 Gateway 两种运行模式。
+Argo 是一个用 Go 实现的极简 AI Agent 框架。六个模块 (deck/helm/reef/vault/sail/crew) 通过包级单例调用协作，同一份核心代码编译为 CLI 和 Gateway 两种运行模式。共享类型集中在 knot 包。
 
 ## 技术栈
 
@@ -24,13 +24,13 @@ Argo 是一个用 Go 实现的极简 AI Agent 框架。六个模块 (deck/helm/r
 
 ## 跨模块接口契约
 
-各模块接口由 helm（消费者）定义，对应模块提供实现：
+各模块通过包级公开函数暴露能力，由 helm 直接调用：
 
-- **deck → Tools**：List() 列出全部工具、Lookup(name) 按名查找。工具执行通过 Tool 接口直接调用，不经过中间层
-- **reef → Compactor**：Compact(messages, tokenLimit) 接收消息历史 + 窗口上限，返回裁剪/摘要后的消息
-- **vault → Memory**：Append 写入对话记录、Recall 检索长期记忆、Store 写入长期记忆
-- **sail → LLM**：Chat(request) 统一 LLM 调用，返回流式 Event channel，Window() 返回 token 上限
-- **crew → Skills**：List() 列出可用 Skill、Instructions(name) 返回特定 Skill 的指令文本
+- **deck**：`List()` / `Lookup(name)` / `Tool.Execute()` — 工具注册、发现、执行
+- **reef**：`Compact(ctx, messages, tokenLimit)` — 上下文裁剪，失败降级
+- **vault**：`Recall()` / `Store()` / `Append()` — 长期记忆存取（待建）
+- **sail**：`Chat(ctx, modelName, req)` / `Window(modelName)` / `DefaultModel()` — LLM 调用 + 模型配置
+- **crew**：`List()` / `Instructions(name)` — 技能加载（待建）
 
 ## 数据流
 
@@ -55,33 +55,32 @@ argo run / argo serve
 用户输入
   │
   ▼
-helm.runLoop()
+helm.RunLoop()
   │
-  ├── 1. reef.Compact(messages, window)    // 裁剪消息历史（未超阈值则原样返回）
-  ├── 2. deck.List()                       // 获取可用工具列表
-  ├── 3. buildSystemPrompt(                // 拼装 system prompt
-  │        crew.ActiveInstructions()     //   ← crew: 当前 Skill 指令
-  │        vault.Recall()                   //   ← vault: 用户偏好/长期记忆
-  │        tools                            //   ← deck: 工具描述
-  │    )
-  ├── 4. sail.Chat(system, messages, tools) // LLM 调用 → <-chan Event（流式转发）
-  │      ├── Event.text_delta  → 调用方渲染逐 token
-  │      ├── Event.tool_use    → LLM 要调工具
-  │      └── Event.done        → 最终回复 + token 用量
+  │   会话级缓存（循环前只执行一次）：
+  │   ├── deck.List() + buildSystemPrompt()
+  │   └── 跨轮次复用
   │
-  ├── 5. deck.Lookup(name) → Tool.Execute(params)             // 执行工具（如 LLM 有 tool_use）
-  │      └── Event.tool_use (Result 已填充) → 工具执行完成
+  ├── 1. reef.Compact()        // 裁剪消息历史（失败降级用原始消息）
+  ├── 2. sail.Chat()           // LLM 调用 → <-chan Event（流式转发）
+  │      ├── textStart / textDelta / textDone  → 累计 + 转发
+  │      ├── toolUseStart                      → 收集待执行
+  │      └── done / error                      → 最终回复或错误
   │
-  ├── 6. vault.Append(newMessages)          // 写入对话记录
+  ├── 3. 无 tool_use → 退出
   │
-  └── 7. 回到步骤 1（如 LLM 还有 tool_use）或结束
+  ├── 4. deck.Lookup() + Tool.Execute()   // 逐条执行，发 toolUseDone
+  │
+  ├── 5. 结果注入 state.Messages          // assistant + tool 消息
+  │
+  └── 6. 继续循环或退出
 ```
 
 ## 配置文件与目录结构
 
 ```
 ~/.argo/
-├── config.json                // deck: 外部 CLI 工具配置
+├── config.json                // 全局配置（工具 + 模型 provider）
 ├── profile.md                 // vault: 用户画像/偏好（LLM 维护，5K 预算）
 ├── AGENTS.md                  // vault: 硬性约束（用户管理，LLM 只读）
 ├── sessions/
@@ -99,6 +98,7 @@ argo/
 │   ├── run/                   // CLI 入口
 │   └── serve/                 // Gateway 入口
 ├── src/
+│   ├── knot/                  // 跨模块共享类型
 │   ├── deck/                  // 工具管理模块
 │   ├── helm/                  // Agent 循环模块
 │   ├── reef/                  // 上下文压缩模块

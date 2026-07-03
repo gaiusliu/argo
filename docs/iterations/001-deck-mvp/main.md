@@ -8,6 +8,7 @@
 
 - [x] 核心结构/接口定义（Tool、ToolResult、ToolSource、builtinTool、cliTool）
 - [x] 内置工具 handler（bash、read、write、edit、grep、glob、list、lookup，共 8 个）
+- [ ] 内置工具 handler（webfetch、websearch）
 - [x] 启动注册流程（RegisterTools → RegisterTool + toolsIdx 冲突检查 + builtin 优先）
 - [x] 外部 CLI 工具配置（ConfigPath + LoadConfig + ValidateConfig，map 结构）
 - [x] 工具选择（List / Lookup + RWMutex + toolsIdx O(1) 查找）
@@ -25,11 +26,11 @@
 | 文件 | 内容 |
 |------|------|
 | `tool.go` | Tool 接口、类型定义、List/Lookup（RWMutex + toolsIdx）、RegisterTool（冲突检查）、RegisterTools |
-| `builtin_tool.go` | 8 个 handler、resolveShell、builtinTools 清单 |
+| `builtin_tool.go` | 10 个 handler、resolveShell、builtinTools 清单 |
 | `tool_registry.go` | ToolsConfig、CLIToolEntry、ConfigPath、LoadConfig、validateCLIEntry、ValidateConfig |
 | `cli_tool.go` | CLI 工具，委托 bashHandler + postProcess |
 | `truncation.go` | truncatedMarker 常量、truncate（HeadTail）、store、postProcess |
 
 ## 状态
 
-✅ 完成
+🔄 进行中（新增 webfetch、websearch 内置工具）
