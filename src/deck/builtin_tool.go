@@ -19,7 +19,42 @@ type builtinTool struct {
 	handler     func(ctx context.Context, params map[string]any) (ToolResult, error)
 }
 
+func (bt builtinTool) Name() string        { return bt.name }
+func (bt builtinTool) Description() string { return bt.description }
+func (bt builtinTool) Source() ToolSource  { return SourceBuiltin }
+func (bt builtinTool) Execute(ctx context.Context, params map[string]any) (ToolResult, error) {
+	result, err := bt.handler(ctx, params)
+	return postProcess(result), err
+}
+
+var builtinTools = []builtinTool{
+	{name: "bash", description: "Executes shell commands and returns combined output", handler: bashHandler},
+	{name: "read", description: "Reads file contents with line numbers, supports offset/limit paging", handler: readHandler},
+	{name: "write", description: "Creates or overwrites a file at the given path", handler: writeHandler},
+	{name: "edit", description: "Makes precise string replacements in a file, supports replace_all", handler: editHandler},
+	{name: "grep", description: "Searches file contents with regex, returns file:line:content matches", handler: grepHandler},
+	{name: "glob", description: "Finds files matching a glob pattern, returns matching paths", handler: globHandler},
+	{name: "list", description: "Lists all registered tools with names and descriptions", handler: listHandler},
+	{name: "lookup", description: "Gets detailed metadata for a tool by name", handler: lookupHandler},
+}
+
 var excludedDirs = []string{".git", "node_modules", ".argo"}
+
+// resolveShell 返回当前平台的 shell 路径和 flag
+// Windows 优先 Git Bash / WSL 的 bash，找不到则回退到 cmd
+func resolveShell() (string, string) {
+	if runtime.GOOS == "windows" {
+		if _, err := exec.LookPath("bash"); err == nil {
+			return "bash", "-c"
+		}
+		shell := os.Getenv("COMSPEC")
+		if shell == "" {
+			shell = "cmd"
+		}
+		return shell, "/c"
+	}
+	return "/bin/sh", "-c"
+}
 
 func bashHandler(ctx context.Context, params map[string]any) (ToolResult, error) {
 	cmdStr, ok := params["cmd"].(string)
@@ -28,16 +63,7 @@ func bashHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 	}
 
 	// 选择 shell
-	shell := "/bin/sh"
-	shellFlag := "-c"
-	if runtime.GOOS == "windows" {
-		// COMSPEC 指向系统 cmd.exe 的绝对路径（如 C:\Windows\System32\cmd.exe），
-		// 是所有 Windows 版本必定存在的环境变量，比直接写 "cmd" 更可靠
-		shell = os.Getenv("COMSPEC")
-		if shell == "" {
-			shell = "cmd"
-		}
-	}
+	shell, shellFlag := resolveShell()
 
 	// 执行
 	cmd := exec.CommandContext(ctx, shell, shellFlag, cmdStr)
@@ -94,7 +120,7 @@ func readHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 		}
 		// 读到 limit 行就停
 		if read >= limit {
-			buf.WriteString("... (truncated)\n")
+			buf.WriteString(truncatedMarker + "\n")
 			break
 		}
 		fmt.Fprintf(&buf, "%5d\t%s\n", lineNum, scanner.Text())
@@ -269,14 +295,10 @@ func grepHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 		return ToolResult{Status: StatusError, Output: "grep failed: " + err.Error()}, fmt.Errorf("grep failed: %w", err)
 	}
 	if found >= limit {
-		buf.WriteString("... (truncated)\n")
+		buf.WriteString(truncatedMarker + "\n")
 	}
 
 	return ToolResult{Status: StatusSuccess, Output: buf.String()}, nil
-}
-
-func isExcludedDir(name string) bool {
-	return slices.Contains(excludedDirs, name)
 }
 
 func globHandler(ctx context.Context, params map[string]any) (ToolResult, error) {
@@ -351,7 +373,7 @@ func globHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 	}
 
 	if found >= limit {
-		buf.WriteString("... (truncated)\n")
+		buf.WriteString(truncatedMarker + "\n")
 	}
 
 	if found == 0 {
@@ -359,4 +381,32 @@ func globHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 	}
 
 	return ToolResult{Status: StatusSuccess, Output: buf.String()}, nil
+}
+
+func isExcludedDir(name string) bool {
+	return slices.Contains(excludedDirs, name)
+}
+
+// listHandler 返回注册表中全部工具的名称和描述
+func listHandler(ctx context.Context, params map[string]any) (ToolResult, error) {
+	tools := List()
+	var buf strings.Builder
+	for _, t := range tools {
+		fmt.Fprintf(&buf, "%s: %s\n", t.Name(), t.Description())
+	}
+	return ToolResult{Status: StatusSuccess, Output: buf.String()}, nil
+}
+
+// lookupHandler 按名称查找工具，返回详细元数据
+func lookupHandler(ctx context.Context, params map[string]any) (ToolResult, error) {
+	name, ok := params["name"].(string)
+	if !ok || name == "" {
+		return ToolResult{Status: StatusError, Output: "lookup: name is required"}, fmt.Errorf("lookup: name is required")
+	}
+	t, ok := Lookup(name)
+	if !ok {
+		return ToolResult{Status: StatusError, Output: "tool not found: " + name}, fmt.Errorf("lookup: tool not found: %s", name)
+	}
+	out := fmt.Sprintf("name: %s\ndescription: %s\nsource: %d\n", t.Name(), t.Description(), t.Source())
+	return ToolResult{Status: StatusSuccess, Output: out}, nil
 }
