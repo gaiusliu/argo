@@ -16,3 +16,8 @@
 
 - 不使用 `Co-Authored-By` 署名
 - message 使用中文描述
+
+## 命令白名单
+
+- 项目 `.claude/settings.json` 维护了无需审批的 Bash 命令白名单
+- 如遇到反复审批的常用命令，主动询问用户是否加入白名单
