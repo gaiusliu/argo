@@ -305,3 +305,52 @@
 **替代方案**：
 - `go func() { <-ctx.Done(); body.Close() }()` — goroutine 泄漏。
 - `select { case <-ctx.Done() }` — scanner 阻塞在 `Read()` 期间无法响应。
+
+## DEC-024：请求体 tools 字段先占位不填，待测试后决定
+
+**状态**：✅ 现行
+
+**日期**：2026-07-04
+
+**决策**：`openAIReq` 结构体已加 `Tools []openAITool` 字段（`omitempty`），但 `buildOpenAIBody` 暂不填充。等测试后再决定是否填入 tool 列表。
+
+**背景**：OpenAI API 的 `tools` 字段让模型以结构化 `tool_calls` 形式返回工具调用。但 Argo 的工具发现链路是 `List → Lookup → --help`（DEC-002），LLM 通过 system prompt 中的说明自行推断参数。加不加 `tools` 字段影响模型行为——加了就走 function calling，不加就走纯文本输出。
+
+**选择**：先定义好类型占位，不影响流式链路（`streamState` 已能解析 `tool_calls` delta）。通过实际测试对比两种模式的表现再决定。
+
+**替代方案**：
+- 现在就填 `tools` —— 过早优化，可能和 DEC-002 的 `--help` 机制产生冲突。
+- 不加字段——如果后续需要，改结构体 + 填逻辑耦合在一起，改动量大。
+
+## DEC-025：模型元数据从 models.dev 运行时拉取，本地 JSON 缓存
+
+**状态**：✅ 现行
+
+**日期**：2026-07-05
+
+**决策**：`Window()` 的 context window 数据从 `https://models.dev/api.json` 运行时拉取，缓存到 `~/.argo/metadata.json`。三级查找：用户配置 > models.dev 缓存 > 保守默认 128000。
+
+**背景**：`Window()` 需要返回准确的 context window 供 reef 判断压缩时机。pi 用构建时脚本 `generate-models.ts` 从 models.dev + OpenRouter + Vercel AI Gateway + NVIDIA NIM 四个源拉数据，生成 22K 行的静态 TS 文件编译进二进制。Argo MVP 阶段不需要那么复杂。
+
+**选择**：运行时方案。首次调用 `Window()` 时通过 `sync.Once` 触发——先读本地缓存立即可用，后台 goroutine 拉取 models.dev 覆盖更新。models.dev 免费、免认证、覆盖 20+ 厂商。查找时先精确匹配 key，再对模型名部分做前缀匹配（加 `-` / `.` 版本分隔符边界），防止 `gpt-4` 误匹配 `gpt-4o`。
+
+**替代方案**：
+- 构建时脚本生成 Go 源码 — 每次启动不能自动更新数据，需开发者手动跑 `go generate`。
+- 完全硬编码内置表 — 手动维护，新模型需要发版。
+- OpenRouter API — 需要 API Key 认证，违背零配置原则。
+
+## DEC-026：6 类错误分类 + adapter 层短延迟重试
+
+**状态**：✅ 现行
+
+**日期**：2026-07-05
+
+**决策**：`classifyError` 将 HTTP 响应分为 6 类（auth/quota/rate_limit/server_error/context_overflow/network），返回 `APIError{Retryable, RetryAfterSeconds}`。重试在 `doChat` adapter 层：网络/429/5xx 自动重试（3 次指数退避 1s/2s/4s），429 优先使用 Retry-After 头。5xx 不触发换模型——换模型需上层征求用户同意。
+
+**背景**：kilocode 在 executor 层做短延迟重试（MAX_RETRIES=2, 500ms 基数），pi 在 agent-session 层做长延迟重试（baseDelay 可配置）。两者都在 adapter/executor 层做基本的可重试状态码处理，session/agent 层再做更复杂的 fallback 决策。
+
+**选择**：adapter 层处理确定性的短延迟重试（网络瞬断、429 rate limit、5xx 临时故障），`Retryable` 标记由 `classifyError` 返回。不重试的（auth、quota、context_overflow）直接返回错误给 helm。换模型由上层决定（当前未实现）。
+
+**替代方案**：
+- 重试全部放 `Chat()` 层 — 需要改变 `doChat` 签名为同步 HTTP 调用 + 在 `Chat()` 中做重试循环，增加复杂度。
+- 重试全部放 helm 层 — helm 需要解析 EventError、判断重试、重新调 `sail.Chat()`，循环控制复杂。

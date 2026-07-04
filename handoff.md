@@ -1,102 +1,74 @@
-# Handoff — sail MVP 流式事件处理
+# Handoff — sail MVP 收尾 → CLI + 权限审批 → vault
 
 ## 背景
 
-本会话完成了 sail 模块的流式事件处理核心链路：SSE 解析 + 状态机 + ctx 安全退出 + JSON 请求体转换。从 `Chat()` 入口到 `<-chan knot.Event` 出口的完整数据通路已打通。
+sail MVP 全部 9 项功能已完成：SSE 解析 + 状态机 + ctx 安全退出 + JSON 请求体转换 + 错误分类/重试 + models.dev 元数据 + tools 占位。代码能编译但**还不能跑**——缺少 CLI 入口和权限审批。
 
-## 本次产出
+## 当前进度总览
 
-### 1. 流式事件状态机（`streamState`）
-
-参考 kilocode 的 `transform()` 和 pi 的 `ensureXxxBlock()` 模式，在 `streamState.handleChunk()` 中实现了 text/thinking/tool_use 三块的 start/delta 自动判断：
-
-- 用 `textActive` / `thinkingActive` 布尔 + `toolCalls map[int]string` 跟踪状态
-- 首次出现 content → `EventTextStart`；后续 → `EventTextDelta`
-- 首次出现 reasoning → `EventThinkingStart`；后续 → `EventThinkingDelta`
-- 首次出现新 tool_call index → `EventToolUseStart`；后续 → `EventToolUseDelta`
-- 状态转换（reasoning → text 或 tool_calls）时自动关闭 reasoning block
-- `flush()` 在 `[DONE]` / EOF 时关闭所有活跃 block
-
-### 2. SSE 解析 + ctx 安全退出
-
-- `context.AfterFunc(ctx, body.Close)` 替代手动 goroutine——回调挂到 ctx 取消传播链，零泄漏
-- `defer stop()` 在 scanner 先结束时摘除回调，避免双 Close
-- scanner.Err 和 ctx.Err 各自独立判断，分别推 EventError
-
-### 3. JSON 请求体转换
-
-- `buildOpenAIBody` 将 `knot.ChatRequest.Messages` 转为 OpenAI Chat Completions JSON
-- `openAIMsg` 独立于 `knot.Message`——领域类型和协议适配各司其职，为 Anthropic adapter 预留
-- 当前不含 `tools` 字段
-
-### 4. ChatRequest 简化
-
-- 删除 `SystemPrompt` 字段，system prompt 作为 `MessageRoleSystem` 消息放入 Messages 首位
-- `helm.RunLoop` 中 `buildSystemPrompt` 结果包装为 `knot.Message{Role: MessageRoleSystem}`
-
-### 5. Adapter 架构
-
-- 一份 SSE 实现 + 两个入口函数：`OpenAIChat` + `CompatibleChat`
-- 参考 pi 的 provider=配置对象模式（DEC-022）
-- baseURL 常量 `openAIBaseURL` 在 `openai.go` 定义
-
-### 6. 配置加载
-
-- `knot.GetConfig()` 用 `sync.Once` 惰性加载
-
-## 文件清单
-
-新增：
-- `src/sail/adapter.go` — `streamState` + `parseSSE` + `doChat` + `buildOpenAIBody`
-- `src/sail/openai.go` — `OpenAIChat`
-- `src/sail/compatible.go` — `CompatibleChat`
-- `docs/modules/sail/design.md` — sail 模块设计文档
-
-修改：
-- `src/knot/types.go` — 删 `ChatRequest.SystemPrompt`、加 `MessageRoleSystem`
-- `src/knot/config.go` — 加 `GetConfig()`（sync.Once）
-- `src/sail/sail.go` — `Chat` 实现配置路由 + provider dispatch
-- `src/helm/loop.go` — system prompt 改为 Message 入队
-- `docs/decisions.md` — 加 DEC-022、DEC-023
-- `docs/glossary.md` — 加 SSE、choices
-- `docs/modules/sail/decisions.md` — 删除（已合并至全局 decisions.md）
-
-## 依赖关系
-
-```
-knot (零外部依赖)
-├── deck → knot
-├── sail → knot
-├── reef → knot
-└── helm → deck + sail + reef + knot
-```
-
-## 当前进度
-
-| # | 功能 | 状态 |
-|---|------|------|
-| 1 | 核心类型定义 | ✅ |
-| 2 | 配置加载（GetConfig） | ✅ |
-| 3 | SSE 解析 + 流式状态机 | ✅ |
-| 4 | JSON 请求体转换 | ✅（缺 tools 字段） |
-| 5 | Provider Adapter ×2 | ✅ |
-| 6 | Chat 配置路由 | ✅ |
-| 7 | 错误分类 + 重试 | ⏳ |
-| 8 | 模型元数据内置表（Window） | ⏳ |
-| 9 | Tools 字段加入请求体 | ⏳ |
+| 模块 | 状态 | 产出 |
+|------|------|------|
+| deck | ✅ | 工具注册/发现/调用，内置工具 + CLI 外部工具 |
+| sail | ✅ | LLM 流式接入，OpenAI + Compatible adapter，6 类错误分类，models.dev 元数据 |
+| helm | 🚧 | RunLoop 五步闭环可编译，缺 Approver 注入，未端到端测试 |
+| reef | 🚧 | Compact() 桩（原样返回），待实现真实压缩 |
+| vault | ❌ | 未开工 |
+| crew | ❌ | 未开工 |
+| cmd | ❌ | 未开工 |
 
 ## 下一步
 
-1. **`tools` 字段**：`buildOpenAIBody` 中加 tools 字段，需要确定 `knot.Tool` 接口是否需要 `Parameters()` 方法
-2. **错误分类**：DEC-S03 的 6 类错误 + 重试逻辑在 `doChat` 层实现
-3. **模型元数据内置表**：实现 `Window()` 从内置表查 context window
+决定先跳过 vault/crew，优先做能**让整个流程跑起来**的功能：
+
+### 1. 权限审批（Approver 接口 + CLI 实现）
+
+**理由**：没有审批的 Agent 是危险的——所有工具直接执行。审批是流程测试的前置条件。
+
+- `knot/types.go`：新增 `Approver` 接口（`Approve(toolUse ToolUse) (bool, error)`）
+- `helm/loop.go`：在工具执行前注入 Approver——`Lookup` 命中后、`Execute` 之前，调用 `Approver.Approve()`
+- 首次用 CLI 审批实现：工具名称 + 参数打印到 stderr，等用户输入 `y/n`
+
+### 2. 极简 CLI（`cmd/run/main.go`）
+
+**理由**：有了它才能实际跑 agent 循环、验证 sail→helm 链路。
+
+- 加载配置 → 注册工具 → 循环读 stdin → `helm.RunLoop` → stdout 流式输出
+- 硬编码默认模型名（从 config 取），不做 CLI 参数解析
+- Ctrl+C 退出
+
+### 3. vault — session 持久化 + transcript 写入
+
+**理由**：跑完的会话没有记录等于白跑。
+
+- session 创建/加载/列表（归属 vault，不作为独立模块）
+- transcript.jsonl 追加写入（6 种 type）
+- profile.md 读写、AGENTS.md 只读加载
+
+### 4. session 切换
+
+在 vault 基础上支持多会话管理。
 
 ## 重要决策
 
-- DEC-022：一份 SSE 实现 + 两个入口函数
+### session 归属
+
+**session 归属 vault，不自成模块。**
+
+理由：
+- vault 职责是"所有文件持久化"——session 的创建/加载/列表本质是文件 IO
+- 参照 pi（agent-session.ts 在 coding-agent 内）和 kilocode（session/ 自成模块），Argo MVP 选最简单的方案
+- helm 已有 `TurnState` 运行时状态，vault 提供 `LoadSession(id) → TurnState` 和 `SaveSession(state)` 即可
+- 初期用户不需要多会话切换，一个 session 跑通就是里程碑
+
+## 文件清单（本阶段新增）
+
+- `src/sail/errors.go` — `APIError` + `classifyError` + `parseOpenAIError`
+- `src/knot/metadata.go` — `fetchMetadata` + 本地缓存 + `LookupWindow`
+
+## 已有决策
+
+- DEC-022：一份 SSE + 两个入口
 - DEC-023：`context.AfterFunc` 替代手动 goroutine
-- 状态机设计见 [docs/modules/sail/design.md](docs/modules/sail/design.md)
-
-## suggested skills
-
-- code-review：审查本次改动
+- DEC-024：tools 字段占位不填
+- DEC-025：models.dev 运行时拉取元数据
+- DEC-026：6 类错误分类 + adapter 层短延迟重试

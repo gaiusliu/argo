@@ -77,7 +77,7 @@ sail.Window(modelName)
 
 - 两个 adapter 统一内部接口，对外只暴露 `<-chan knot.Event`，helm 不感知 adapter 差异
 - API Key 的 `${ENV_VAR}` 解析在 Client 层统一完成，adapter 只收明文字符串
-- Adapter 不自行决定重试策略——`classifyError` 返回 `Retryable` 标记，重试次数和间隔由 Client 控制
+- 重试在 `doChat` adapter 层：`classifyError` 返回 `Retryable` 标记由 `doChat` 内部消费，3 次指数退避。5xx 不触发换模型——换模型需上层征求用户同意
 - 流式事件类型必须对齐 `knot.Event` 已有的 12 种类型
 - 不设整轮截止时间，HTTP 超时通过 `context.Context` 传导（DEC-S02）
 
@@ -96,12 +96,12 @@ sail.Window(modelName)
 
 | 功能 | 状态 | 子文档 | 关联测试 |
 |------|------|--------|---------|
-| 核心类型定义 | ⏳ 待开始 | — | — |
-| 配置加载完善 | ⏳ 待开始 | — | — |
-| Provider Adapter ×2 | ⏳ 待开始 | — | — |
-| Client 实现 | ⏳ 待开始 | — | — |
-| 错误分类 + 重试 | ⏳ 待开始 | — | — |
-| 模型元数据内置表 | ⏳ 待开始 | — | — |
+| 核心类型定义 | ✅ | — | — |
+| 配置加载完善 | ✅ | — | — |
+| Provider Adapter ×2 | ✅ | — | — |
+| Client 实现 | ✅ | — | — |
+| 错误分类 + 重试 | ✅ | errors.go | — |
+| 模型元数据内置表 | ✅ | metadata.go | — |
 
 ## 关键决策
 

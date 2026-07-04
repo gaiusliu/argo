@@ -49,7 +49,16 @@ func Chat(ctx context.Context, modelName string, req knot.ChatRequest) (<-chan k
 }
 
 // Window 返回模型的 context window token 上限。
-// 桩：返回保守默认值 128000。
+// 三级查找：用户配置 > models.dev 缓存 > 保守默认 128000。
 func Window(modelName string) knot.TokenLimit {
+	// 用户配置优先
+	if mc, ok := knot.LookupModel(modelName); ok && mc.Limit != nil && mc.Limit.Context != nil {
+		return knot.TokenLimit{MaxTokens: *mc.Limit.Context}
+	}
+	// 内置数据表（models.dev 缓存）
+	if w := knot.LookupWindow(modelName); w > 0 {
+		return knot.TokenLimit{MaxTokens: w}
+	}
+	// 保守默认值
 	return knot.TokenLimit{MaxTokens: 128000}
 }

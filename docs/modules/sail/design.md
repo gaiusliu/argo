@@ -15,7 +15,10 @@ sail 是 Argo 的 LLM 接入层——加载配置、路由 provider、发起流�
 | `streamState` | 流式事件状态机，跟踪 text/thinking/tool_use 三块的首个 chunk 以决定 push start 还是 delta |
 | `streamState.handleChunk` | 解析 chunk JSON → 根据当前状态判断 event type → 返回事件列表 |
 | `streamState.flush` | 流结束时关闭所有活跃 block：textDone → thinkingDone → toolUseDone |
-| `knot.Event` | 流式事件：textStart/Delta/Done、thinkingStart/Delta/Done、toolUseStart/Delta/Done、error |
+| `APIError` | 结构化错误：Code（auth/quota/rate_limit/server_error/context_overflow/network）、Retryable、RetryAfterSeconds |
+| `classifyError` | HTTP 状态码 + 响应体 + 响应头 → `APIError`。429 内部检查 body 区分 billing 耗尽和频率限制 |
+| `LookupWindow` | knot.metadata.go：精确匹配 + 前缀匹配（版本分隔符边界），从 models.dev 缓存查找 context window |
+| `knot.Event` | 流式事件：textStart/Delta/Done、thinkingStart/Delta/Done、toolUseStart/Delta/Done、done、error |
 
 ## 行为合约
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"argo/src/knot"
 )
@@ -18,6 +19,20 @@ type openAIReq struct {
 	Model    string      `json:"model"`
 	Messages []openAIMsg `json:"messages"`
 	Stream   bool        `json:"stream"`
+	Tools    []openAITool `json:"tools,omitempty"`
+}
+
+// openAITool OpenAI function calling 工具定义
+type openAITool struct {
+	Type     string            `json:"type"`
+	Function openAIToolFunc    `json:"function"`
+}
+
+// openAIToolFunc 工具函数元数据
+type openAIToolFunc struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
 }
 
 // openAIMsg 单条消息
@@ -211,40 +226,79 @@ func parseSSE(ctx context.Context, body io.ReadCloser, out chan<- knot.Event) {
 	}
 }
 
-// doChat 构造请求体 → HTTP POST → goroutine 解析 SSE → 返回事件 channel
+// doChat 构造请求体 → HTTP POST（含重试） → goroutine 解析 SSE → 返回事件 channel
 func doChat(ctx context.Context, apiKey, baseURL, modelName string, req knot.ChatRequest) (<-chan knot.Event, error) {
-	// 构造 OpenAI JSON 请求体
 	body, err := buildOpenAIBody(req, modelName)
 	if err != nil {
 		return nil, fmt.Errorf("sail: build body: %w", err)
 	}
 
-	// 构造 HTTP POST 请求，超时由 ctx 传导
 	url := baseURL + "/v1/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("sail: new request: %w", err)
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
+	const maxRetries = 3
+	var retryDelay time.Duration // 下次重试前的等待时间
 
-	// 发送请求
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("sail: http: %w", err)
-	}
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// 统一退避：429 Retry-After 优先，否则指数退避 1s/2s/4s
+		if retryDelay > 0 {
+			select {
+			case <-time.After(retryDelay):
+			case <-ctx.Done():
+				out := make(chan knot.Event, 1)
+				out <- knot.Event{Type: knot.EventError, Err: &APIError{Code: "network", Message: ctx.Err().Error()}}
+				close(out)
+				return out, nil
+			}
+		}
 
-	// 非 200 → 返回错误事件
-	if resp.StatusCode != http.StatusOK {
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("sail: new request: %w", err)
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(httpReq)
+		if err != nil {
+			// 网络错误可重试
+			if attempt < maxRetries-1 {
+				retryDelay = time.Duration(1<<attempt) * time.Second
+				continue
+			}
+			ae := &APIError{Code: "network", Retryable: true, Message: err.Error()}
+			out := make(chan knot.Event, 1)
+			out <- knot.Event{Type: knot.EventError, Err: ae}
+			close(out)
+			return out, nil
+		}
+
+		// 200 → 解析 SSE 流
+		if resp.StatusCode == http.StatusOK {
+			out := make(chan knot.Event, 8)
+			go parseSSE(ctx, resp.Body, out)
+			return out, nil
+		}
+
+		// 非 200 → 读 body + 分类
+		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		out := make(chan knot.Event, 1)
-		out <- knot.Event{Type: knot.EventError, Err: fmt.Errorf("sail: http %d", resp.StatusCode)}
-		close(out)
-		return out, nil
+		ae := classifyError(resp.StatusCode, respBody, resp.Header)
+
+		if !ae.Retryable || attempt >= maxRetries-1 {
+			out := make(chan knot.Event, 1)
+			out <- knot.Event{Type: knot.EventError, Err: ae}
+			close(out)
+			return out, nil
+		}
+		// 设置下次退避：429 用 Retry-After，否则指数退避
+		if ae.RetryAfterSeconds > 0 {
+			retryDelay = time.Duration(ae.RetryAfterSeconds) * time.Second
+		} else {
+			retryDelay = time.Duration(1<<attempt) * time.Second
+		}
 	}
 
-	// 启动 goroutine 解析 SSE 流
-	out := make(chan knot.Event, 8)
-	go parseSSE(ctx, resp.Body, out)
+	out := make(chan knot.Event, 1)
+	out <- knot.Event{Type: knot.EventError, Err: &APIError{Code: "server_error", Retryable: false, Message: "重试次数已耗尽"}}
+	close(out)
 	return out, nil
 }
