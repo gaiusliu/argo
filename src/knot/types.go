@@ -1,31 +1,44 @@
 package knot
 
-import "argo/src/deck"
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+// EventType 流式事件类型标识
+type EventType string
 
 // Event 类型常量
 const (
-	EventStart         = "start"
-	EventTextStart     = "textStart"
-	EventTextDelta     = "textDelta"
-	EventTextDone      = "textDone"
-	EventThinkingStart = "thinkingStart"
-	EventThinkingDelta = "thinkingDelta"
-	EventThinkingDone  = "thinkingDone"
-	EventToolUseStart  = "toolUseStart"
-	EventToolUseDelta  = "toolUseDelta"
-	EventToolUseDone   = "toolUseDone"
-	EventDone          = "done"
-	EventError         = "error"
+	EventStart         EventType = "start"
+	EventTextStart     EventType = "textStart"
+	EventTextDelta     EventType = "textDelta"
+	EventTextDone      EventType = "textDone"
+	EventThinkingStart EventType = "thinkingStart"
+	EventThinkingDelta EventType = "thinkingDelta"
+	EventThinkingDone  EventType = "thinkingDone"
+	EventToolUseStart  EventType = "toolUseStart"
+	EventToolUseDelta  EventType = "toolUseDelta"
+	EventToolUseDone   EventType = "toolUseDone"
+	EventDone          EventType = "done"
+	EventError         EventType = "error"
+)
 
-	MessageRoleUser      = "user"
-	MessageRoleAssistant = "assistant"
-	MessageRoleTool      = "tool"
+// MessageRole 消息角色类型
+type MessageRole string
+
+const (
+	MessageRoleUser      MessageRole = "user"
+	MessageRoleAssistant MessageRole = "assistant"
+	MessageRoleTool      MessageRole = "tool"
 )
 
 // Message 单条对话消息
 type Message struct {
 	// Role 取值为 MessageRoleUser | MessageRoleAssistant | MessageRoleTool
-	Role    string
+	Role    MessageRole
 	Content string
 }
 
@@ -33,7 +46,7 @@ type Message struct {
 type ChatRequest struct {
 	SystemPrompt string
 	Messages     []Message
-	Tools        []deck.Tool
+	Tools        []Tool
 }
 
 // TokenLimit 模型 context window 上限
@@ -50,7 +63,7 @@ type TokenUsage struct {
 // Event 流式事件，通过 channel 推送给调用方
 type Event struct {
 	// Type 标识事件类型，取值为各 Event* 常量
-	Type    string
+	Type    EventType
 	Delta   string // textDelta 或 thinkingDelta，由 Type 区分
 	ToolUse *ToolUse
 	Done    *DonePayload
@@ -62,11 +75,99 @@ type ToolUse struct {
 	ID         string
 	Name       string
 	Parameters map[string]any
-	Result     *deck.ToolResult
+	Result     *ToolResult
 }
 
 // DonePayload 完成时的最终结果
 type DonePayload struct {
 	Text       string
 	TokenUsage TokenUsage
+}
+
+// ToolSource 工具来源
+type ToolSource int
+
+const (
+	SourceBuiltin ToolSource = iota
+	SourceCLI
+)
+
+// Tool 工具接口，由 deck 包实现
+type Tool interface {
+	Name() string
+	Description() string
+	Source() ToolSource
+	Execute(ctx context.Context, params map[string]any) (ToolResult, error)
+}
+
+// ResultStatus 工具执行结果的状态码
+type ResultStatus int
+
+const (
+	StatusSuccess ResultStatus = iota
+	StatusError
+)
+
+// ToolResult 工具执行返回结果
+type ToolResult struct {
+	Output   string
+	Status   ResultStatus
+	Metadata map[string]any
+}
+
+// ConfigPath 返回全局配置文件路径：$ARGO_HOME/config.json 或 ~/.argo/config.json
+func ConfigPath() (string, error) {
+	if home := os.Getenv("ARGO_HOME"); home != "" {
+		return filepath.Join(home, "config.json"), nil
+	}
+	dir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("config path: %w", err)
+	}
+	return filepath.Join(dir, ".argo", "config.json"), nil
+}
+
+// Config 全局配置，聚合各模块配置
+type Config struct {
+	Deck DeckConfig `json:"deck"`
+	Sail SailConfig `json:"sail"`
+}
+
+// DeckConfig deck 模块配置
+type DeckConfig struct {
+	CLI map[string]CLIToolEntry `json:"cli"`
+}
+
+// CLIToolEntry 单个 CLI 工具的配置条目
+type CLIToolEntry struct {
+	Description string `json:"description"`
+}
+
+// SailConfig sail 模块配置
+type SailConfig struct {
+	Model    string                    `json:"model,omitempty"`
+	Provider map[string]ProviderConfig `json:"provider"`
+}
+
+// ProviderConfig provider 级别配置
+type ProviderConfig struct {
+	Name    string                 `json:"name,omitempty"`
+	Env     []string               `json:"env,omitempty"`
+	Options map[string]any         `json:"options,omitempty"`
+	Models  map[string]ModelConfig `json:"models"`
+}
+
+// ModelConfig 单个模型配置
+type ModelConfig struct {
+	Name      string      `json:"name,omitempty"`
+	Reasoning bool        `json:"reasoning,omitempty"`
+	Limit     *ModelLimit `json:"limit,omitempty"`
+	Options   map[string]any `json:"options,omitempty"`
+}
+
+// ModelLimit token 限制，nil 使用 API 默认值
+type ModelLimit struct {
+	Context *int `json:"context,omitempty"`
+	Input   *int `json:"input,omitempty"`
+	Output  *int `json:"output,omitempty"`
 }

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"argo/src/knot"
 )
 
 // 截断阈值
@@ -110,7 +112,7 @@ func store(text string) (string, error) {
 }
 
 // postProcess 对工具输出做截断后处理，未超上限则原样返回
-func postProcess(result ToolResult) ToolResult {
+func postProcess(result knot.ToolResult) knot.ToolResult {
 	if len(result.Output) <= maxOutputLen {
 		return result
 	}

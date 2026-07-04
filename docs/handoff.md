@@ -1,76 +1,70 @@
-# Handoff — WebFetch / WebSearch 工具实现
+# Handoff — sail MVP 启动
 
 ## 背景
 
-001-deck-mvp 迭代原本只有 8 个内置工具（bash、read、write、edit、grep、glob、list、lookup），全是本地文件系统操作。本次新增 `web_fetch` 和 `web_search` 两个网络工具，使 MVP 具备基础的信息获取能力。
+上一轮交接完成了 deck 模块的 WebFetch/WebSearch 工具。本次会话确定了下一步开发方向：**sail 模块 MVP**——将模型 API 调用的桩实现替换为真实的 LLM 接入。
 
-## 已完成的代码
+## 上轮 TODO 处理结论
 
-### `src/deck/builtin_tool.go`
+上一轮 handoff 的 6 项待办，本次确认：
 
-新增约 220 行，4 个函数 + 3 个类型 + 3 个包级常量：
-
-| 函数 | 功能 |
+| 待办 | 结论 |
 |------|------|
-| `webFetchHandler` | HTTP GET 获取 URL，MIME 分发（图片→base64、HTML→去标签、其余透传），30s 超时，5MB 上限 |
-| `webSearchHandler` | `fnvHash(query) % 2` 分流到 Parallel 或 Exa MCP 端点搜索，零配置零 API Key |
-| `callSearchMCP` | 直接 JSON-RPC 2.0 `tools/call` 请求，不引入 MCP SDK，纯标准库 |
-| `stripHTML` | 正则去标签，跳过 script/style/noscript/iframe/object/embed 块 |
+| 权限/授权机制 (DEC-017) | 仍为最高优先级，但需等 sail 实现后才能在真实工具调用链中测试 |
+| 分流机制 → session-based | 已完成 query hash 分流 |
+| SSE 容错解析 | 暂不做 |
+| CheckRedirect 跨 host 限制 | 暂不做 |
+| HTML→Markdown 转换 | 暂不做 |
+| WebSearch 暴露更多参数 | 暂不做 |
 
-| 常量 | 值 |
-|------|-----|
-| `webFetchMaxSize` | 5MB |
-| `webFetchTimeout` | 30s |
-| `searchRPCTimeout` | 25s |
+## 本次会话产出
 
-| 类型 | 用途 |
+### 决策：下一个模块选 sail
+
+- helm 的 RunLoop 已完整但 `sail.Chat()` 是桩，整个 Agent 系统无法端到端运行
+- sail 是当前关键路径——不实现它，reef、vault、权限机制都无法真正测试
+
+### 新建迭代文档
+
+`docs/iterations/003-sail-mvp/main.md`，按 grow-doc 标准创建：
+
+- **目标**：两个 adapter（openai + openai-compatible），覆盖 ChatGPT / DeepSeek / MiniMax / Kimi / 豆包
+- **关键流程**：Chat 流程（查配置 → 选 adapter → 流式推送 → classifyError）+ Window 三级查找（用户覆盖 → 内置表 → 保守回退）
+- **6 个功能项**：核心类型定义 → 配置加载完善 → Provider Adapter ×2 → Client 实现 → 错误分类 + 重试 → 模型元数据内置表
+- **6 个错误场景**：auth / quota / rate_limit / server_error / context_overflow / network，各有 MVP 阶段考量说明
+- **5 条公共设计约束**
+- 全部 ⏳ 待开始，暂不拆功能文档
+
+### 现有文档状态
+
+| 文件 | 状态 |
 |------|------|
-| `mcpRPCParams` / `mcpRPCRequest` / `mcpRPCResult` | JSON-RPC 2.0 请求/响应结构体 |
+| `docs/modules/sail/what.md` | 暂保留，开发参考，闭环后删除 |
+| `docs/modules/sail/how.md` | 暂保留，开发参考，闭环后删除 |
+| `docs/modules/sail/decisions.md` | DEC-S01~S06，符合 grow-doc 格式，不动 |
+| `docs/modules/sail/todo.md` | 暂保留，开发参考，闭环后删除 |
+| `docs/modules/sail/design.md` | **不生成**——grow-doc 规则：迭代闭环后才生成 |
 
-## 全部 21 条决策
+## 下一步：开始开发
 
-`docs/decisions.md`（DEC-001 ~ DEC-021）。本次新增 DEC-012 ~ DEC-021：
+按 003-sail-mvp/main.md 的功能列表顺序：
 
-| 编号 | 主题 |
-|------|------|
-| DEC-012 | WebFetch MVP 不限制跨 host 重定向 |
-| DEC-013 | WebFetch MVP 不设置 User-Agent |
-| DEC-014 | WebFetch 固定输出纯文本，不做 HTML→Markdown 转换 |
-| DEC-015 | WebSearch MVP 只解析 JSON 响应，不处理 SSE |
-| DEC-016 | WebSearch MVP 只暴露 query 参数 |
-| DEC-017 | deck MVP 无权限/授权机制（**后续最高优先级**） |
-| DEC-018 | WebSearch 使用免费 MCP 端点（Parallel + Exa），不自建爬虫 |
-| DEC-019 | WebSearch 直接 JSON-RPC 调用，不引入 MCP SDK |
-| DEC-020 | WebSearch 分流使用 query hash 而非 session ID |
-| DEC-021 | WebFetch MIME 分发策略（image→base64、HTML→去标签、其余透传） |
-
-## 迭代文档
-
-- `docs/iterations/001-deck-mvp/main.md`：范围更新为 10 个工具，状态 ✅ 完成
-- `docs/modules/deck/design.md`：内置工具集表格新增 `web_fetch` 和 `web_search`
-
-## 关键设计选择（非决策层面的理解要点）
-
-1. **Parallel/Exa 双端点**：两者均为免费 MCP（无需 API Key 即可调用），国内无同等替代
-2. **不引入 MCP 协议栈**：参考 KiloCode `mcp-websearch.ts`（97 行无 SDK），直接 HTTP POST JSON-RPC
-3. **不伪装浏览器 UA**：Go `net/http` 默认指纹不做伪装，避免 TLS 指纹与 UA 不匹配触发 Cloudflare 欺骗惩罚
-4. **工具名用下划线**：`web_fetch`、`web_search`（非 `webfetch`），handler 名用 MixedCaps（`webFetchHandler`、`webSearchHandler`）
-
-## 待办（按优先级）
-
-1. **权限/授权机制**（DEC-017）—— deck 或 helm 层引入 `ctx.ask` 式确认，参考 OpenCode `ctx.ask({permission, patterns, always})`
-2. 在 Tool 接口扩展 session 上下文 → WebSearch 改为 session-based 分流（DEC-020）
-3. SSE 响应格式容错解析（DEC-015）
-4. WebFetch 引入 `CheckRedirect` 跨 host 安全限制（DEC-012）
-5. HTML→Markdown 转换——候选库 `github.com/JohannesKaufmann/html-to-markdown`（DEC-014）
-6. WebSearch 暴露 `type`、`numResults` 等参数（DEC-016）
+1. 核心类型定义（APIError、ModelCapability）
+2. 配置加载完善（GenerateDefaultConfig——扫描环境变量自动生成 `models.json`）
+3. Provider Adapter ×2（openai + openai-compatible）
+4. Client 实现（Chat + Window 替换桩）
+5. 错误分类 + 重试
+6. 模型元数据内置表（5 个厂家常用模型的 context window）
 
 ## 项目上下文
 
 - Go 代码规范：`go-styleguide/`
+- 接口由消费者（helm）定义，实现在 sail
 - commit message 中文描述，不使用 Co-Authored-By
 - 先说明想法征求同意，再修改代码
 
 ## Suggested Skills
 
-无特定 skill 建议。如需扩展 WebFetch/WebSearch，直接参考 `docs/decisions.md` 中 DEC-012 ~ DEC-021。
+- **grow-doc**：迭代闭环时提取 design.md，或开发中将功能文档从 main.md 拆分
+- **code-review**：每完成一个功能后审查变更
+- **tdd**：如需测试先行开发

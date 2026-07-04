@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"argo/src/deck"
+	"argo/src/knot"
 )
 
 // 行为核心：coding 场景（默认）
@@ -17,7 +17,7 @@ Complete tasks by reading files, executing commands, editing code, and creating 
 Be concise. If you don't know something, say so — don't make things up.`
 
 // buildSystemPrompt 向各模块索取上下文片段，拼装完整 system prompt
-func buildSystemPrompt(tools []deck.Tool) string {
+func buildSystemPrompt(tools []knot.Tool) string {
 	var sb strings.Builder
 
 	// 1. 行为核心

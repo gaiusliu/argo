@@ -3,8 +3,8 @@ package deck
 import (
 	"bufio"
 	"bytes"
-	"encoding/base64"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -18,18 +18,20 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"argo/src/knot"
 )
 
 type builtinTool struct {
 	name        string
 	description string
-	handler     func(ctx context.Context, params map[string]any) (ToolResult, error)
+	handler     func(ctx context.Context, params map[string]any) (knot.ToolResult, error)
 }
 
-func (bt *builtinTool) Name() string        { return bt.name }
-func (bt *builtinTool) Description() string { return bt.description }
-func (bt *builtinTool) Source() ToolSource  { return SourceBuiltin }
-func (bt *builtinTool) Execute(ctx context.Context, params map[string]any) (ToolResult, error) {
+func (bt *builtinTool) Name() string            { return bt.name }
+func (bt *builtinTool) Description() string     { return bt.description }
+func (bt *builtinTool) Source() knot.ToolSource { return knot.SourceBuiltin }
+func (bt *builtinTool) Execute(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	result, err := bt.handler(ctx, params)
 	return postProcess(result), err
 }
@@ -42,9 +44,9 @@ type mcpRPCParams struct {
 
 // mcpRPCRequest 是 JSON-RPC 2.0 tools/call 请求体
 type mcpRPCRequest struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      int         `json:"id"`
-	Method  string      `json:"method"`
+	JSONRPC string       `json:"jsonrpc"`
+	ID      int          `json:"id"`
+	Method  string       `json:"method"`
 	Params  mcpRPCParams `json:"params"`
 }
 
@@ -97,10 +99,10 @@ func resolveShell() (string, string) {
 	return "/bin/sh", "-c"
 }
 
-func bashHandler(ctx context.Context, params map[string]any) (ToolResult, error) {
+func bashHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	cmdStr, ok := params["cmd"].(string)
 	if !ok || cmdStr == "" {
-		return ToolResult{Status: StatusError, Output: "empty command"}, fmt.Errorf("bash: empty command")
+		return knot.ToolResult{Status: knot.StatusError, Output: "empty command"}, fmt.Errorf("bash: empty command")
 	}
 
 	// 选择 shell
@@ -112,18 +114,18 @@ func bashHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 	if err != nil {
 		// 区分超时和非零退出码
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ToolResult{Status: StatusError, Output: "context error:" + ctxErr.Error()}, fmt.Errorf("context error: %w", ctxErr)
+			return knot.ToolResult{Status: knot.StatusError, Output: "context error:" + ctxErr.Error()}, fmt.Errorf("context error: %w", ctxErr)
 		}
-		return ToolResult{Status: StatusError, Output: "bash command error:" + err.Error()}, fmt.Errorf("bash command error: %w", err)
+		return knot.ToolResult{Status: knot.StatusError, Output: "bash command error:" + err.Error()}, fmt.Errorf("bash command error: %w", err)
 	}
 
-	return ToolResult{Status: StatusSuccess, Output: string(output)}, nil
+	return knot.ToolResult{Status: knot.StatusSuccess, Output: string(output)}, nil
 }
 
-func readHandler(ctx context.Context, params map[string]any) (ToolResult, error) {
+func readHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	path, ok := params["path"].(string)
 	if !ok || path == "" {
-		return ToolResult{Status: StatusError, Output: "path is required"}, fmt.Errorf("path is required")
+		return knot.ToolResult{Status: knot.StatusError, Output: "path is required"}, fmt.Errorf("path is required")
 	}
 
 	offset := 1
@@ -139,7 +141,7 @@ func readHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 	// 打开文件
 	file, err := os.Open(path)
 	if err != nil {
-		return ToolResult{Status: StatusError, Output: "read failed: " + err.Error()}, fmt.Errorf("read failed: %w", err)
+		return knot.ToolResult{Status: knot.StatusError, Output: "read failed: " + err.Error()}, fmt.Errorf("read failed: %w", err)
 	}
 	defer file.Close()
 
@@ -151,7 +153,7 @@ func readHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
-			return ToolResult{Status: StatusError, Output: "read failed: " + err.Error()}, fmt.Errorf("read failed: %w", err)
+			return knot.ToolResult{Status: knot.StatusError, Output: "read failed: " + err.Error()}, fmt.Errorf("read failed: %w", err)
 		}
 
 		lineNum++
@@ -169,53 +171,53 @@ func readHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 	}
 
 	if err := scanner.Err(); err != nil {
-		return ToolResult{Status: StatusError, Output: "read failed: " + err.Error()}, fmt.Errorf("read failed: %w", err)
+		return knot.ToolResult{Status: knot.StatusError, Output: "read failed: " + err.Error()}, fmt.Errorf("read failed: %w", err)
 	}
 
-	return ToolResult{Status: StatusSuccess, Output: buf.String()}, nil
+	return knot.ToolResult{Status: knot.StatusSuccess, Output: buf.String()}, nil
 }
 
-func writeHandler(ctx context.Context, params map[string]any) (ToolResult, error) {
+func writeHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	// 提取参数
 	path, ok := params["path"].(string)
 	if !ok || path == "" {
-		return ToolResult{Status: StatusError, Output: "write failed: path is required"}, fmt.Errorf("write failed: path is required")
+		return knot.ToolResult{Status: knot.StatusError, Output: "write failed: path is required"}, fmt.Errorf("write failed: path is required")
 	}
 
 	content, ok := params["content"].(string)
 	if !ok {
-		return ToolResult{Status: StatusError, Output: "write failed: content is required"}, fmt.Errorf("write failed: content is required")
+		return knot.ToolResult{Status: knot.StatusError, Output: "write failed: content is required"}, fmt.Errorf("write failed: content is required")
 	}
 
 	// 检查 ctx
 	if err := ctx.Err(); err != nil {
-		return ToolResult{Status: StatusError, Output: "write failed: " + err.Error()}, fmt.Errorf("write failed: %w", err)
+		return knot.ToolResult{Status: knot.StatusError, Output: "write failed: " + err.Error()}, fmt.Errorf("write failed: %w", err)
 	}
 
 	// 写入文件
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		return ToolResult{Status: StatusError, Output: "write failed: " + err.Error()}, fmt.Errorf("write failed: %w", err)
+		return knot.ToolResult{Status: knot.StatusError, Output: "write failed: " + err.Error()}, fmt.Errorf("write failed: %w", err)
 	}
 
-	return ToolResult{Status: StatusSuccess, Output: fmt.Sprintf("wrote %d bytes to %s", len(content), path)}, nil
+	return knot.ToolResult{Status: knot.StatusSuccess, Output: fmt.Sprintf("wrote %d bytes to %s", len(content), path)}, nil
 }
 
-func editHandler(ctx context.Context, params map[string]any) (ToolResult, error) {
+func editHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	// 提取参数
 	path, ok := params["path"].(string)
 	if !ok || path == "" {
-		return ToolResult{Status: StatusError, Output: "edit failed: path is required"}, fmt.Errorf("edit failed: path is required")
+		return knot.ToolResult{Status: knot.StatusError, Output: "edit failed: path is required"}, fmt.Errorf("edit failed: path is required")
 	}
 
 	oldStr, ok := params["old_string"].(string)
 	if !ok || oldStr == "" {
-		return ToolResult{Status: StatusError, Output: "edit failed: old_string is required"}, fmt.Errorf("edit failed: old_string is required")
+		return knot.ToolResult{Status: knot.StatusError, Output: "edit failed: old_string is required"}, fmt.Errorf("edit failed: old_string is required")
 	}
 	newStr, _ := params["new_string"].(string)
 
 	// 拒绝空编辑
 	if oldStr == newStr {
-		return ToolResult{Status: StatusError, Output: "edit failed: old_string and new_string are identical"}, fmt.Errorf("edit failed: old_string and new_string are identical")
+		return knot.ToolResult{Status: knot.StatusError, Output: "edit failed: old_string and new_string are identical"}, fmt.Errorf("edit failed: old_string and new_string are identical")
 	}
 
 	replaceAll := false
@@ -225,25 +227,25 @@ func editHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 
 	// 检查 ctx
 	if err := ctx.Err(); err != nil {
-		return ToolResult{Status: StatusError, Output: "edit failed: " + err.Error()}, fmt.Errorf("edit failed: %w", err)
+		return knot.ToolResult{Status: knot.StatusError, Output: "edit failed: " + err.Error()}, fmt.Errorf("edit failed: %w", err)
 	}
 
 	// 读取原文件
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ToolResult{Status: StatusError, Output: "edit failed: " + err.Error()}, fmt.Errorf("edit failed: %w", err)
+		return knot.ToolResult{Status: knot.StatusError, Output: "edit failed: " + err.Error()}, fmt.Errorf("edit failed: %w", err)
 	}
 
 	// 定位并替换——old_string 必须精确匹配
 	content := string(data)
 	count := strings.Count(content, oldStr)
 	if count == 0 {
-		return ToolResult{Status: StatusError, Output: "edit failed: old_string not found"}, fmt.Errorf("edit failed: old_string not found")
+		return knot.ToolResult{Status: knot.StatusError, Output: "edit failed: old_string not found"}, fmt.Errorf("edit failed: old_string not found")
 	}
 
 	// 有多个匹配结果且replaceAll没有设置，冲突
 	if count > 1 && !replaceAll {
-		return ToolResult{Status: StatusError, Output: fmt.Sprintf("edit failed: old_string matches %d times, must be unique", count)}, fmt.Errorf("edit failed: old_string matches %d times, must be unique", count)
+		return knot.ToolResult{Status: knot.StatusError, Output: fmt.Sprintf("edit failed: old_string matches %d times, must be unique", count)}, fmt.Errorf("edit failed: old_string matches %d times, must be unique", count)
 	}
 
 	var result string
@@ -254,30 +256,30 @@ func editHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 	}
 
 	if err := os.WriteFile(path, []byte(result), 0644); err != nil {
-		return ToolResult{Status: StatusError, Output: "edit failed: " + err.Error()}, fmt.Errorf("edit failed: %w", err)
+		return knot.ToolResult{Status: knot.StatusError, Output: "edit failed: " + err.Error()}, fmt.Errorf("edit failed: %w", err)
 	}
 
 	if replaceAll {
-		return ToolResult{Status: StatusSuccess, Output: fmt.Sprintf("replaced %d occurrences in %s", count, path)}, nil
+		return knot.ToolResult{Status: knot.StatusSuccess, Output: fmt.Sprintf("replaced %d occurrences in %s", count, path)}, nil
 	}
-	return ToolResult{Status: StatusSuccess, Output: fmt.Sprintf("replaced 1 occurrence in %s", path)}, nil
+	return knot.ToolResult{Status: knot.StatusSuccess, Output: fmt.Sprintf("replaced 1 occurrence in %s", path)}, nil
 }
 
-func grepHandler(ctx context.Context, params map[string]any) (ToolResult, error) {
+func grepHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	pattern, ok := params["pattern"].(string)
 	if !ok || pattern == "" {
-		return ToolResult{Status: StatusError, Output: "grep failed: pattern is required"}, fmt.Errorf("grep failed: pattern is required")
+		return knot.ToolResult{Status: knot.StatusError, Output: "grep failed: pattern is required"}, fmt.Errorf("grep failed: pattern is required")
 	}
 
 	path, ok := params["path"].(string)
 	if !ok || path == "" {
-		return ToolResult{Status: StatusError, Output: "grep failed: path is required"}, fmt.Errorf("grep failed: path is required")
+		return knot.ToolResult{Status: knot.StatusError, Output: "grep failed: path is required"}, fmt.Errorf("grep failed: path is required")
 	}
 
 	// 编译正则
 	re, err := regexp.Compile(pattern)
 	if err != nil {
-		return ToolResult{Status: StatusError, Output: "grep failed: " + err.Error()}, fmt.Errorf("grep failed: %w", err)
+		return knot.ToolResult{Status: knot.StatusError, Output: "grep failed: " + err.Error()}, fmt.Errorf("grep failed: %w", err)
 	}
 
 	limit := 200
@@ -287,7 +289,7 @@ func grepHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 
 	// 检查 ctx
 	if err := ctx.Err(); err != nil {
-		return ToolResult{Status: StatusError, Output: "grep failed: " + err.Error()}, fmt.Errorf("grep failed: %w", err)
+		return knot.ToolResult{Status: knot.StatusError, Output: "grep failed: " + err.Error()}, fmt.Errorf("grep failed: %w", err)
 	}
 
 	var buf strings.Builder
@@ -333,25 +335,25 @@ func grepHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 	})
 
 	if err := ctx.Err(); err != nil {
-		return ToolResult{Status: StatusError, Output: "grep failed: " + err.Error()}, fmt.Errorf("grep failed: %w", err)
+		return knot.ToolResult{Status: knot.StatusError, Output: "grep failed: " + err.Error()}, fmt.Errorf("grep failed: %w", err)
 	}
 	if found >= limit {
 		buf.WriteString(truncatedMarker + "\n")
 	}
 
-	return ToolResult{Status: StatusSuccess, Output: buf.String()}, nil
+	return knot.ToolResult{Status: knot.StatusSuccess, Output: buf.String()}, nil
 }
 
-func globHandler(ctx context.Context, params map[string]any) (ToolResult, error) {
+func globHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	// 提取参数
 	path, ok := params["path"].(string)
 	if !ok || path == "" {
-		return ToolResult{Status: StatusError, Output: "glob failed: path is required"}, fmt.Errorf("glob failed: path is required")
+		return knot.ToolResult{Status: knot.StatusError, Output: "glob failed: path is required"}, fmt.Errorf("glob failed: path is required")
 	}
 
 	pattern, ok := params["pattern"].(string)
 	if !ok || pattern == "" {
-		return ToolResult{Status: StatusError, Output: "glob failed: pattern is required"}, fmt.Errorf("glob failed: pattern is required")
+		return knot.ToolResult{Status: knot.StatusError, Output: "glob failed: pattern is required"}, fmt.Errorf("glob failed: pattern is required")
 	}
 
 	limit := 200
@@ -363,12 +365,12 @@ func globHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 	// 报 ErrBadPattern，合法 pattern 对所有文件名都不会 err。提前校验后 Walk
 	// 内即可忽略 Match 的 error。若未来 Go 版本放宽或变更此行为，需重新评估。
 	if _, err := filepath.Match(pattern, ""); err != nil {
-		return ToolResult{Status: StatusError, Output: "glob failed: " + err.Error()}, fmt.Errorf("glob failed: %w", err)
+		return knot.ToolResult{Status: knot.StatusError, Output: "glob failed: " + err.Error()}, fmt.Errorf("glob failed: %w", err)
 	}
 
 	// 检查 ctx
 	if err := ctx.Err(); err != nil {
-		return ToolResult{Status: StatusError, Output: "glob failed: " + err.Error()}, fmt.Errorf("glob failed: %w", err)
+		return knot.ToolResult{Status: knot.StatusError, Output: "glob failed: " + err.Error()}, fmt.Errorf("glob failed: %w", err)
 	}
 
 	var buf strings.Builder
@@ -410,7 +412,7 @@ func globHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 	})
 
 	if err := ctx.Err(); err != nil {
-		return ToolResult{Status: StatusError, Output: "glob failed: " + err.Error()}, fmt.Errorf("glob failed: %w", err)
+		return knot.ToolResult{Status: knot.StatusError, Output: "glob failed: " + err.Error()}, fmt.Errorf("glob failed: %w", err)
 	}
 
 	if found >= limit {
@@ -418,10 +420,10 @@ func globHandler(ctx context.Context, params map[string]any) (ToolResult, error)
 	}
 
 	if found == 0 {
-		return ToolResult{Status: StatusSuccess, Output: "no files found"}, nil
+		return knot.ToolResult{Status: knot.StatusSuccess, Output: "no files found"}, nil
 	}
 
-	return ToolResult{Status: StatusSuccess, Output: buf.String()}, nil
+	return knot.ToolResult{Status: knot.StatusSuccess, Output: buf.String()}, nil
 }
 
 func isExcludedDir(name string) bool {
@@ -429,27 +431,27 @@ func isExcludedDir(name string) bool {
 }
 
 // listHandler 返回注册表中全部工具的名称和描述
-func listHandler(ctx context.Context, params map[string]any) (ToolResult, error) {
+func listHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	tools := List()
 	var buf strings.Builder
 	for _, t := range tools {
 		fmt.Fprintf(&buf, "%s: %s\n", t.Name(), t.Description())
 	}
-	return ToolResult{Status: StatusSuccess, Output: buf.String()}, nil
+	return knot.ToolResult{Status: knot.StatusSuccess, Output: buf.String()}, nil
 }
 
 // lookupHandler 按名称查找工具，返回详细元数据
-func lookupHandler(ctx context.Context, params map[string]any) (ToolResult, error) {
+func lookupHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	name, ok := params["name"].(string)
 	if !ok || name == "" {
-		return ToolResult{Status: StatusError, Output: "lookup: name is required"}, fmt.Errorf("lookup: name is required")
+		return knot.ToolResult{Status: knot.StatusError, Output: "lookup: name is required"}, fmt.Errorf("lookup: name is required")
 	}
 	t, ok := Lookup(name)
 	if !ok {
-		return ToolResult{Status: StatusError, Output: "tool not found: " + name}, fmt.Errorf("lookup: tool not found: %s", name)
+		return knot.ToolResult{Status: knot.StatusError, Output: "tool not found: " + name}, fmt.Errorf("lookup: tool not found: %s", name)
 	}
 	out := fmt.Sprintf("name: %s\ndescription: %s\n", t.Name(), t.Description())
-	return ToolResult{Status: StatusSuccess, Output: out}, nil
+	return knot.ToolResult{Status: knot.StatusSuccess, Output: out}, nil
 }
 
 // stripHTML 去除 HTML 标签及 script/style 块，返回纯文本
@@ -466,21 +468,21 @@ func stripHTML(s string) string {
 
 // webFetchHandler 获取 URL 内容并返回纯文本
 // 只允许 http/https 协议，响应上限 5MB，超时 30s
-func webFetchHandler(ctx context.Context, params map[string]any) (ToolResult, error) {
+func webFetchHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	// 提取并校验 url 参数
 	url, ok := params["url"].(string)
 	if !ok || url == "" {
-		return ToolResult{Status: StatusError, Output: "web_fetch: url is required"},
+		return knot.ToolResult{Status: knot.StatusError, Output: "web_fetch: url is required"},
 			fmt.Errorf("web_fetch: url is required")
 	}
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		return ToolResult{Status: StatusError, Output: "web_fetch: only http/https allowed"},
+		return knot.ToolResult{Status: knot.StatusError, Output: "web_fetch: only http/https allowed"},
 			fmt.Errorf("web_fetch: unsupported scheme")
 	}
 
 	// 检查上下文
 	if err := ctx.Err(); err != nil {
-		return ToolResult{Status: StatusError, Output: "web_fetch: " + err.Error()},
+		return knot.ToolResult{Status: knot.StatusError, Output: "web_fetch: " + err.Error()},
 			fmt.Errorf("web_fetch: %w", err)
 	}
 
@@ -488,27 +490,27 @@ func webFetchHandler(ctx context.Context, params map[string]any) (ToolResult, er
 	client := &http.Client{Timeout: webFetchTimeout}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return ToolResult{Status: StatusError, Output: "web_fetch: " + err.Error()},
+		return knot.ToolResult{Status: knot.StatusError, Output: "web_fetch: " + err.Error()},
 			fmt.Errorf("web_fetch: %w", err)
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return ToolResult{Status: StatusError, Output: "web_fetch: " + err.Error()},
+		return knot.ToolResult{Status: knot.StatusError, Output: "web_fetch: " + err.Error()},
 			fmt.Errorf("web_fetch: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// 先看 content-length 头，超限直接拒绝，避免下载浪费
 	if cl := resp.ContentLength; cl > webFetchMaxSize {
-		return ToolResult{Status: StatusError, Output: "web_fetch: response too large"},
+		return knot.ToolResult{Status: knot.StatusError, Output: "web_fetch: response too large"},
 			fmt.Errorf("web_fetch: content-length %d exceeds limit", cl)
 	}
 
 	// 限制读取实际大小
 	body, err := io.ReadAll(io.LimitReader(resp.Body, webFetchMaxSize))
 	if err != nil {
-		return ToolResult{Status: StatusError, Output: "web_fetch: " + err.Error()},
+		return knot.ToolResult{Status: knot.StatusError, Output: "web_fetch: " + err.Error()},
 			fmt.Errorf("web_fetch: %w", err)
 	}
 
@@ -521,12 +523,12 @@ func webFetchHandler(ctx context.Context, params map[string]any) (ToolResult, er
 	case strings.HasPrefix(mime, "image/"):
 		// 图片转 base64 Data URL，供视觉模型消费
 		b64 := base64.StdEncoding.EncodeToString(body)
-		return ToolResult{Status: StatusSuccess, Output: fmt.Sprintf("data:%s;base64,%s", mime, b64)}, nil
+		return knot.ToolResult{Status: knot.StatusSuccess, Output: fmt.Sprintf("data:%s;base64,%s", mime, b64)}, nil
 	case mime == "text/html":
-		return ToolResult{Status: StatusSuccess, Output: stripHTML(string(body))}, nil
+		return knot.ToolResult{Status: knot.StatusSuccess, Output: stripHTML(string(body))}, nil
 	default:
 		// 纯文本、未知类型一律直接返回
-		return ToolResult{Status: StatusSuccess, Output: string(body)}, nil
+		return knot.ToolResult{Status: knot.StatusSuccess, Output: string(body)}, nil
 	}
 }
 
@@ -587,16 +589,16 @@ func fnvHash(s string) uint32 {
 
 // webSearchHandler 通过网络搜索获取结果
 // 在 Parallel 和 Exa 两个免费 MCP 端点间随机选择一个
-func webSearchHandler(ctx context.Context, params map[string]any) (ToolResult, error) {
+func webSearchHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	// 提取并校验 query 参数
 	query, ok := params["query"].(string)
 	if !ok || query == "" {
-		return ToolResult{Status: StatusError, Output: "web_search: query is required"},
+		return knot.ToolResult{Status: knot.StatusError, Output: "web_search: query is required"},
 			fmt.Errorf("web_search: query is required")
 	}
 
 	if err := ctx.Err(); err != nil {
-		return ToolResult{Status: StatusError, Output: "web_search: " + err.Error()},
+		return knot.ToolResult{Status: knot.StatusError, Output: "web_search: " + err.Error()},
 			fmt.Errorf("web_search: %w", err)
 	}
 
@@ -609,10 +611,10 @@ func webSearchHandler(ctx context.Context, params map[string]any) (ToolResult, e
 			"search_queries": []string{query},
 		})
 		if err != nil {
-			return ToolResult{Status: StatusError, Output: "web_search: " + err.Error()},
+			return knot.ToolResult{Status: knot.StatusError, Output: "web_search: " + err.Error()},
 				fmt.Errorf("web_search: %w", err)
 		}
-		return ToolResult{Status: StatusSuccess, Output: text}, nil
+		return knot.ToolResult{Status: knot.StatusSuccess, Output: text}, nil
 	}
 
 	text, err := callSearchMCP(ctx, "https://mcp.exa.ai/mcp", "web_search_exa", map[string]any{
@@ -622,8 +624,8 @@ func webSearchHandler(ctx context.Context, params map[string]any) (ToolResult, e
 		"livecrawl":  "fallback",
 	})
 	if err != nil {
-		return ToolResult{Status: StatusError, Output: "web_search: " + err.Error()},
+		return knot.ToolResult{Status: knot.StatusError, Output: "web_search: " + err.Error()},
 			fmt.Errorf("web_search: %w", err)
 	}
-	return ToolResult{Status: StatusSuccess, Output: text}, nil
+	return knot.ToolResult{Status: knot.StatusSuccess, Output: text}, nil
 }

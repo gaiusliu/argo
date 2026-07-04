@@ -74,15 +74,15 @@ func RunLoop(ctx context.Context, state *TurnState) (<-chan knot.Event, error) {
 
 				tool, found := deck.Lookup(tu.Name)
 				if !found {
-					tu.Result = &deck.ToolResult{
-						Status: deck.StatusError,
+					tu.Result = &knot.ToolResult{
+						Status: knot.StatusError,
 						Output: "tool not found: " + tu.Name,
 					}
 				} else {
 					result, err := tool.Execute(ctx, tu.Parameters)
 					if err != nil {
-						tu.Result = &deck.ToolResult{
-							Status: deck.StatusError,
+						tu.Result = &knot.ToolResult{
+							Status: knot.StatusError,
 							Output: tu.Name + " tool use failed: " + err.Error(),
 						}
 					} else {

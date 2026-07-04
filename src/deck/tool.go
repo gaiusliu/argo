@@ -1,69 +1,43 @@
 package deck
 
 import (
-	"context"
 	"fmt"
 	"sync"
+
+	"argo/src/knot"
 )
 
 // ToolRegistry 管理工具注册表，支持并发安全读写
 type ToolRegistry struct {
 	mu    sync.RWMutex
-	tools map[string]Tool
+	tools map[string]knot.Tool
 }
 
 // NewToolRegistry 创建空的工具注册表——测试等场景可使用独立实例
 func NewToolRegistry() *ToolRegistry {
-	return &ToolRegistry{tools: make(map[string]Tool)}
+	return &ToolRegistry{tools: make(map[string]knot.Tool)}
 }
 
 // 包级默认注册表实例
 var defaultRegistry = NewToolRegistry()
 
-type ToolSource int
-
-const (
-	SourceBuiltin ToolSource = iota
-	SourceCLI
-)
-
-type Tool interface {
-	Name() string
-	Description() string
-	Source() ToolSource
-	Execute(ctx context.Context, params map[string]any) (ToolResult, error)
-}
-
-type ResultStatus int
-
-const (
-	StatusSuccess ResultStatus = iota
-	StatusError
-)
-
-type ToolResult struct {
-	Output   string
-	Status   ResultStatus
-	Metadata map[string]any
-}
-
 // List 返回注册表中所有工具的切片
-func List() []Tool {
+func List() []knot.Tool {
 	return defaultRegistry.List()
 }
 
 // Lookup 按名称查找工具
-func Lookup(name string) (Tool, bool) {
+func Lookup(name string) (knot.Tool, bool) {
 	return defaultRegistry.Lookup(name)
 }
 
 // --- ToolRegistry 方法 ---
 
 // List 返回注册表中所有工具的切片
-func (r *ToolRegistry) List() []Tool {
+func (r *ToolRegistry) List() []knot.Tool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	result := make([]Tool, 0, len(r.tools))
+	result := make([]knot.Tool, 0, len(r.tools))
 	for _, t := range r.tools {
 		result = append(result, t)
 	}
@@ -71,7 +45,7 @@ func (r *ToolRegistry) List() []Tool {
 }
 
 // Lookup 按名称精确匹配工具，O(1)
-func (r *ToolRegistry) Lookup(name string) (Tool, bool) {
+func (r *ToolRegistry) Lookup(name string) (knot.Tool, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	t, ok := r.tools[name]
@@ -79,23 +53,23 @@ func (r *ToolRegistry) Lookup(name string) (Tool, bool) {
 }
 
 // RegisterTool 注册工具到默认注册表
-func RegisterTool(t Tool) error {
+func RegisterTool(t knot.Tool) error {
 	return defaultRegistry.RegisterTool(t)
 }
 
 // resolveConflict 处理工具注册冲突：builtin 覆盖 CLI（返回 nil），其他情况返回错误
-func resolveConflict(existing, incoming Tool) error {
-	if incoming.Source() == SourceBuiltin && existing.Source() == SourceCLI {
+func resolveConflict(existing, incoming knot.Tool) error {
+	if incoming.Source() == knot.SourceBuiltin && existing.Source() == knot.SourceCLI {
 		return nil
 	}
-	if incoming.Source() == SourceBuiltin {
+	if incoming.Source() == knot.SourceBuiltin {
 		return fmt.Errorf("builtin tool %q already registered", incoming.Name())
 	}
 	return fmt.Errorf("CLI tool %q conflicts with builtin tool", incoming.Name())
 }
 
 // RegisterTool 注册工具。builtin 优先：与内置工具同名的 CLI 工具会被拒绝
-func (r *ToolRegistry) RegisterTool(t Tool) error {
+func (r *ToolRegistry) RegisterTool(t knot.Tool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -122,19 +96,14 @@ func (r *ToolRegistry) RegisterTools() error {
 		}
 	}
 
-	// 读配置——找不到或解析不了则直接报错（基础设施问题）
-	cfgPath, err := ConfigPath()
-	if err != nil {
-		return fmt.Errorf("register tools failed: %w", err)
-	}
-	cfg, err := LoadConfig(cfgPath)
+	cfg, err := knot.LoadConfig()
 	if err != nil {
 		return fmt.Errorf("register tools failed: %w", err)
 	}
 
 	// 逐条校验 + 注册，跳过有问题的工具，错误收尾汇总
 	var skipped []error
-	for name, e := range cfg.CLI {
+	for name, e := range cfg.Deck.CLI {
 		verrs := validateCLIEntry(name, e)
 		if len(verrs) > 0 {
 			for _, verr := range verrs {
