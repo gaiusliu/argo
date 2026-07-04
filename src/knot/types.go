@@ -33,20 +33,20 @@ const (
 	MessageRoleUser      MessageRole = "user"
 	MessageRoleAssistant MessageRole = "assistant"
 	MessageRoleTool      MessageRole = "tool"
+	MessageRoleSystem    MessageRole = "system"
 )
 
 // Message 单条对话消息
 type Message struct {
-	// Role 取值为 MessageRoleUser | MessageRoleAssistant | MessageRoleTool
+	// Role 取值为 MessageRoleSystem | MessageRoleUser | MessageRoleAssistant | MessageRoleTool
 	Role    MessageRole
 	Content string
 }
 
 // ChatRequest LLM 调用请求
 type ChatRequest struct {
-	SystemPrompt string
-	Messages     []Message
-	Tools        []Tool
+	Messages []Message
+	Tools    []Tool
 }
 
 // TokenLimit 模型 context window 上限
@@ -159,9 +159,9 @@ type ProviderConfig struct {
 
 // ModelConfig 单个模型配置
 type ModelConfig struct {
-	Name      string      `json:"name,omitempty"`
-	Reasoning bool        `json:"reasoning,omitempty"`
-	Limit     *ModelLimit `json:"limit,omitempty"`
+	Name      string         `json:"name,omitempty"`
+	Reasoning bool           `json:"reasoning,omitempty"`
+	Limit     *ModelLimit    `json:"limit,omitempty"`
 	Options   map[string]any `json:"options,omitempty"`
 }
 

@@ -275,3 +275,33 @@
 **背景**：OpenCode 的 WebFetch 有更精细的三路分发——图片转 base64 attachment、HTML 按 format 参数转 text/markdown/html、其余类型解码后直接返回。它不拒绝 PDF、ZIP 等二进制类型（直接 TextDecoder 解码返回乱码给 LLM）。
 
 **选择**：沿用"不拒绝"策略。未知类型即使解码为乱码，LLM 自身会忽略。拒绝反而损失信息（如 `application/json` 返回的 API 数据正好是 LLM 需要的）。与 OpenCode 的差异：Argo 不做 format 参数（DEC-014）、不做 Markdown 转换（DEC-014）。
+
+## DEC-022：Adapter 一份 SSE 实现 + 两个入口函数
+
+**状态**：✅ 现行
+
+**日期**：2026-07-04
+
+**决策**：sail 的 adapter 层只有一份 SSE 解析实现（`parseSSE` + `convertDelta` + `buildOpenAIBody`），`OpenAIChat` 和 `CompatibleChat` 是两个薄入口函数，区别仅在于 `baseURL` 来源不同。不拆两套独立代码。
+
+**背景**：handoff 中描述了两个 adapter——`openaiAdapter`（ChatGPT）和 `compatibleAdapter`（DeepSeek/MiniMax/Kimi/豆包）。但调研发现：OpenAI、DeepSeek、Kimi、MiniMax、豆包全部共用 OpenAI Chat Completions SSE 格式，协议完全一致。pi 的 provider 设计也是如此——每个 provider 只是一个配置对象（baseUrl + api + models），底层 API handler 是同一个 `openAICompletionsApi`。
+
+**选择**：`adapter.go` 放共享逻辑（`doChat`、`parseSSE`、`convertDelta`、`buildOpenAIBody`），`openai.go` 和 `compatible.go` 各一个入口函数，分别内置 `https://api.openai.com` 和从 `Options["base_url"]` 取值。未来 OpenAI 加专属功能时，各自入口函数内部再分叉。
+
+**替代方案**：两个 adapter 各自一套独立代码。因 MVP 阶段无分歧点、拆开等于维护同一段逻辑两个副本而被否决。
+
+## DEC-023：`context.AfterFunc` 替代手动 goroutine 监听 ctx 取消
+
+**状态**：✅ 现行
+
+**日期**：2026-07-04
+
+**决策**：`parseSSE` 中响应 ctx 取消不手动开 goroutine 监听 `<-ctx.Done()`，改用 `context.AfterFunc(ctx, body.Close)` + `defer stop()`。
+
+**背景**：DEC-S02 要求 goroutine 在 ctx 取消时退出，不泄漏。常规做法是 `go func() { <-ctx.Done(); body.Close() }()`——但该 goroutine 会常驻等待，如果 scanner 先正常结束而 ctx 生命周期很长，goroutine 就一直挂着。
+
+**选择**：`AfterFunc` 将回调挂载到 ctx 的取消传播链上（children map），ctx 取消时由取消发出方同步调用，不额外占用 goroutine。`defer stop()` 在 scanner 先结束时摘除回调，避免双 Close。Go 1.21+ 标准库内置，项目 Go 1.25 可用。
+
+**替代方案**：
+- `go func() { <-ctx.Done(); body.Close() }()` — goroutine 泄漏。
+- `select { case <-ctx.Done() }` — scanner 阻塞在 `Read()` 期间无法响应。

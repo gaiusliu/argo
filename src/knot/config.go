@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 )
 
 // LoadConfig 读取 ~/.argo/config.json，不存在则用默认配置生成并写盘
@@ -85,7 +86,7 @@ func writeConfig(path string, cfg *Config) error {
 
 // DefaultModel 返回配置中的默认模型名，失败回退 "claude"
 func DefaultModel() string {
-	cfg, err := LoadConfig()
+	cfg, err := GetConfig()
 	if err != nil || cfg.Sail.Model == "" {
 		return "claude"
 	}
@@ -124,7 +125,7 @@ func GenerateDefaultConfig() *Config {
 
 // LookupModel 按模型名搜索所有 provider，返回匹配的模型配置
 func LookupModel(modelName string) (ModelConfig, bool) {
-	cfg, err := LoadConfig()
+	cfg, err := GetConfig()
 	if err != nil {
 		return ModelConfig{}, false
 	}
@@ -134,4 +135,19 @@ func LookupModel(modelName string) (ModelConfig, bool) {
 		}
 	}
 	return ModelConfig{}, false
+}
+
+// 全局配置缓存
+var (
+	globalCfg  *Config
+	globalOnce sync.Once
+	globalErr  error
+)
+
+// GetConfig 返回已加载的全局配置，首次调用从磁盘加载，后续返回缓存
+func GetConfig() (*Config, error) {
+	globalOnce.Do(func() {
+		globalCfg, globalErr = LoadConfig()
+	})
+	return globalCfg, globalErr
 }

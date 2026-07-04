@@ -21,6 +21,7 @@ func RunLoop(ctx context.Context, state *TurnState) (<-chan knot.Event, error) {
 		// 会话级缓存：工具列表和 system prompt 只构建一次
 		tools := deck.List()
 		sp := buildSystemPrompt(tools)
+		sysMsg := knot.Message{Role: knot.MessageRoleSystem, Content: sp}
 
 		for {
 			state.TurnCount++
@@ -30,11 +31,10 @@ func RunLoop(ctx context.Context, state *TurnState) (<-chan knot.Event, error) {
 				state.Messages = msgs
 			}
 
-			// 2. LLM 调用
+			// 2. LLM 调用，system 消息永远在最前
 			req := knot.ChatRequest{
-				SystemPrompt: sp,
-				Messages:     state.Messages,
-				Tools:        tools,
+				Messages: append([]knot.Message{sysMsg}, state.Messages...),
+				Tools:    tools,
 			}
 
 			sailEvents, err := sail.Chat(ctx, state.ModelName, req)
