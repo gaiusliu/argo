@@ -2,7 +2,7 @@
 
 ## 概述
 
-helm 是 Argo 的 Agent 核心循环。它是一个无状态的自由函数 `runLoop`，接收一次用户输入，驱动 "LLM 调用 → 工具执行 → 结果注入 → 循环" 的完整链路，返回最终回复。helm 不持有会话状态——消息历史、回合计数等由调用方（CLI / Gateway）维护并传入。各模块通过包级公开函数 + 单例模式提供能力，helm 直接调用（如 `deck.List()`、`sail.Chat()`），不通过依赖注入。
+helm 是 Argo 的 Agent 核心循环。它是一个无状态的自由函数 `RunLoop`，接收一次用户输入，驱动 "LLM 调用 → 工具执行 → 结果注入 → 循环" 的完整链路，返回最终回复。helm 不持有会话状态——消息历史、回合计数等由调用方（CLI / Gateway）维护并传入。brig 规则引擎和 ConfirmFunc 回调由调用方注入，helm 在工具执行前调 brig 做权限门控。
 
 ## 核心概念
 
@@ -20,7 +20,7 @@ helm 是 Argo 的 Agent 核心循环。它是一个无状态的自由函数 `run
 ```
 调用方传入 state（含首次 user message）
   │
-  └─ RunLoop(ctx, &state)
+  └─ RunLoop(ctx, &state, confirm, eng)
        │
        ├─ 会话级缓存（循环前执行一次）
        │    ├─ deck.List()               → 工具列表
@@ -36,7 +36,9 @@ helm 是 Argo 的 Agent 核心循环。它是一个无状态的自由函数 `run
        │    │
        │    ├─ 3. 无 tool_use？→ 退出循环
        │    │
-       │    ├─ 4. deck.Lookup() + Tool.Execute() → 逐条执行，填充 Result
+       │    ├─ 4. deck.Lookup() → brig 门控 → Tool.Execute()
+       │    │      ├─ brig.Evaluate(tu) → Allow / Ask / Deny
+       │    │      ├─ Ask → confirm(tu, reason) → ok? → eng.Append()
        │    │      └─ Event.tool_use（Result 已填）→ 转发给调用方
        │    │
        │    └─ 5. 结果注入 state.Messages → 回到步骤 1
@@ -126,5 +128,6 @@ text 和 thinking 共用 Event.Delta 字段，由 Type 区分。
 | deck | `List()`, `Lookup(name)`, `Tool.Execute(ctx, params)` |
 | reef | `Compact(ctx, messages, tokenLimit)` |
 | sail | `Chat(ctx, modelName, req) → <-chan Event`, `Window(modelName)` |
+| brig | `Evaluate(tu) → (Verdict, reason, pattern)`, `Append(tool, pattern, action, source)` |
 | vault | （待建） |
 | crew | （待建） |

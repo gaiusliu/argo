@@ -100,7 +100,7 @@ func resolveShell() (string, string) {
 }
 
 func bashHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
-	cmdStr, ok := params["cmd"].(string)
+	cmdStr, ok := params[knot.ParamCmd].(string)
 	if !ok || cmdStr == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "empty command"}, fmt.Errorf("bash: empty command")
 	}
@@ -123,18 +123,18 @@ func bashHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 }
 
 func readHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
-	path, ok := params["path"].(string)
+	path, ok := params[knot.ParamPath].(string)
 	if !ok || path == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "path is required"}, fmt.Errorf("path is required")
 	}
 
 	offset := 1
-	if v, ok := params["offset"].(int); ok {
+	if v, ok := params[knot.ParamOffset].(int); ok {
 		offset = v
 	}
 
 	limit := 2000
-	if v, ok := params["limit"].(int); ok {
+	if v, ok := params[knot.ParamLimit].(int); ok {
 		limit = v
 	}
 
@@ -179,12 +179,12 @@ func readHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 
 func writeHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	// 提取参数
-	path, ok := params["path"].(string)
+	path, ok := params[knot.ParamPath].(string)
 	if !ok || path == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "write failed: path is required"}, fmt.Errorf("write failed: path is required")
 	}
 
-	content, ok := params["content"].(string)
+	content, ok := params[knot.ParamContent].(string)
 	if !ok {
 		return knot.ToolResult{Status: knot.StatusError, Output: "write failed: content is required"}, fmt.Errorf("write failed: content is required")
 	}
@@ -204,16 +204,16 @@ func writeHandler(ctx context.Context, params map[string]any) (knot.ToolResult, 
 
 func editHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	// 提取参数
-	path, ok := params["path"].(string)
+	path, ok := params[knot.ParamPath].(string)
 	if !ok || path == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "edit failed: path is required"}, fmt.Errorf("edit failed: path is required")
 	}
 
-	oldStr, ok := params["old_string"].(string)
+	oldStr, ok := params[knot.ParamOldStr].(string)
 	if !ok || oldStr == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "edit failed: old_string is required"}, fmt.Errorf("edit failed: old_string is required")
 	}
-	newStr, _ := params["new_string"].(string)
+	newStr, _ := params[knot.ParamNewStr].(string)
 
 	// 拒绝空编辑
 	if oldStr == newStr {
@@ -221,7 +221,7 @@ func editHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 	}
 
 	replaceAll := false
-	if v, ok := params["replace_all"].(bool); ok {
+	if v, ok := params[knot.ParamReplaceAll].(bool); ok {
 		replaceAll = v
 	}
 
@@ -266,12 +266,12 @@ func editHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 }
 
 func grepHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
-	pattern, ok := params["pattern"].(string)
+	pattern, ok := params[knot.ParamPattern].(string)
 	if !ok || pattern == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "grep failed: pattern is required"}, fmt.Errorf("grep failed: pattern is required")
 	}
 
-	path, ok := params["path"].(string)
+	path, ok := params[knot.ParamPath].(string)
 	if !ok || path == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "grep failed: path is required"}, fmt.Errorf("grep failed: path is required")
 	}
@@ -283,7 +283,7 @@ func grepHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 	}
 
 	limit := 200
-	if v, ok := params["limit"].(int); ok && v > 0 {
+	if v, ok := params[knot.ParamLimit].(int); ok && v > 0 {
 		limit = v
 	}
 
@@ -346,18 +346,18 @@ func grepHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 
 func globHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	// 提取参数
-	path, ok := params["path"].(string)
+	path, ok := params[knot.ParamPath].(string)
 	if !ok || path == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "glob failed: path is required"}, fmt.Errorf("glob failed: path is required")
 	}
 
-	pattern, ok := params["pattern"].(string)
+	pattern, ok := params[knot.ParamPattern].(string)
 	if !ok || pattern == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "glob failed: pattern is required"}, fmt.Errorf("glob failed: pattern is required")
 	}
 
 	limit := 200
-	if v, ok := params["limit"].(int); ok && v > 0 {
+	if v, ok := params[knot.ParamLimit].(int); ok && v > 0 {
 		limit = v
 	}
 
@@ -442,7 +442,7 @@ func listHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 
 // lookupHandler 按名称查找工具，返回详细元数据
 func lookupHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
-	name, ok := params["name"].(string)
+	name, ok := params[knot.ParamName].(string)
 	if !ok || name == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "lookup: name is required"}, fmt.Errorf("lookup: name is required")
 	}
@@ -470,7 +470,7 @@ func stripHTML(s string) string {
 // 只允许 http/https 协议，响应上限 5MB，超时 30s
 func webFetchHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	// 提取并校验 url 参数
-	url, ok := params["url"].(string)
+	url, ok := params[knot.ParamURL].(string)
 	if !ok || url == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "web_fetch: url is required"},
 			fmt.Errorf("web_fetch: url is required")
@@ -591,7 +591,7 @@ func fnvHash(s string) uint32 {
 // 在 Parallel 和 Exa 两个免费 MCP 端点间随机选择一个
 func webSearchHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	// 提取并校验 query 参数
-	query, ok := params["query"].(string)
+	query, ok := params[knot.ParamQuery].(string)
 	if !ok || query == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "web_search: query is required"},
 			fmt.Errorf("web_search: query is required")

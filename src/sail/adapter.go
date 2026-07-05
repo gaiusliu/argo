@@ -16,16 +16,16 @@ import (
 
 // openAIReq OpenAI /v1/chat/completions 请求体
 type openAIReq struct {
-	Model    string      `json:"model"`
-	Messages []openAIMsg `json:"messages"`
-	Stream   bool        `json:"stream"`
+	Model    string       `json:"model"`
+	Messages []openAIMsg  `json:"messages"`
+	Stream   bool         `json:"stream"`
 	Tools    []openAITool `json:"tools,omitempty"`
 }
 
 // openAITool OpenAI function calling 工具定义
 type openAITool struct {
-	Type     string            `json:"type"`
-	Function openAIToolFunc    `json:"function"`
+	Type     string         `json:"type"`
+	Function openAIToolFunc `json:"function"`
 }
 
 // openAIToolFunc 工具函数元数据
@@ -74,15 +74,24 @@ type openAIChunk struct {
 	} `json:"choices"`
 }
 
+// toolCallState 记录单个 tool call 流式推送中的累积状态
+type toolCallState struct {
+	id   string
+	name string
+	args string
+}
+
 // streamState 跟踪流式响应的块状态，决定每个 chunk 应发的 EventType
 type streamState struct {
 	textActive     bool
 	thinkingActive bool
-	toolCalls      map[int]string // index → tool call ID
+	toolCalls      map[int]toolCallState
 }
 
 func newStreamState() *streamState {
-	return &streamState{toolCalls: make(map[int]string)}
+	return &streamState{
+		toolCalls: make(map[int]toolCallState),
+	}
 }
 
 // handleChunk 解析 SSE chunk 并返回对应的事件列表（含 start/delta 判断）
@@ -137,22 +146,18 @@ func (s *streamState) handleChunk(raw []byte) ([]knot.Event, error) {
 				Type:    knot.EventToolUseStart,
 				ToolUse: &knot.ToolUse{ID: tc.ID, Name: tc.Function.Name},
 			})
-			s.toolCalls[tc.Index] = tc.ID
+			s.toolCalls[tc.Index] = toolCallState{id: tc.ID, name: tc.Function.Name}
 		}
-		events = append(events, knot.Event{
-			Type: knot.EventToolUseDelta,
-			ToolUse: &knot.ToolUse{
-				ID:         tc.ID,
-				Name:       tc.Function.Name,
-				Parameters: map[string]any{"args": tc.Function.Arguments},
-			},
-		})
+		// 累积 arguments 片段，flush 时统一发出完整 Delta
+		tcs := s.toolCalls[tc.Index]
+		tcs.args += tc.Function.Arguments
+		s.toolCalls[tc.Index] = tcs
 	}
 
 	return events, nil
 }
 
-// flush 返回关闭所有活跃 block 的事件（textDone / thinkingDone / toolUseDone）
+// flush 返回关闭所有活跃 block 的事件（textDone / thinkingDone / toolUseDelta）
 func (s *streamState) flush() []knot.Event {
 	var events []knot.Event
 	if s.textActive {
@@ -163,10 +168,14 @@ func (s *streamState) flush() []knot.Event {
 		events = append(events, knot.Event{Type: knot.EventThinkingDone})
 		s.thinkingActive = false
 	}
-	for _, id := range s.toolCalls {
+	for _, tcs := range s.toolCalls {
 		events = append(events, knot.Event{
-			Type:    knot.EventToolUseDone,
-			ToolUse: &knot.ToolUse{ID: id},
+			Type: knot.EventToolUseDelta,
+			ToolUse: &knot.ToolUse{
+				ID:         tcs.id,
+				Name:       tcs.name,
+				Parameters: map[string]any{knot.ParamArgs: tcs.args},
+			},
 		})
 	}
 	return events

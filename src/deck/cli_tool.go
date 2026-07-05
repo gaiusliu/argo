@@ -17,12 +17,12 @@ func (c *cliTool) Source() knot.ToolSource { return knot.SourceCLI }
 
 // Execute 将 binary + args 拼成 cmd 后委托给 bashHandler
 func (c *cliTool) Execute(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
-	args, _ := params["args"].(string)
+	args, _ := params[knot.ParamArgs].(string)
 	cmdStr := c.name
 	if args != "" {
 		cmdStr += " " + args
 	}
-	params["cmd"] = cmdStr
+	params[knot.ParamCmd] = cmdStr
 	result, err := bashHandler(ctx, params)
 	return postProcess(result), err
 }

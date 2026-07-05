@@ -2,12 +2,12 @@
 
 ## 概述
 
-Argo 是一个用 Go 实现的极简 AI Agent 框架。六个模块 (deck/helm/reef/vault/sail/crew) 通过包级单例调用协作，同一份核心代码编译为 CLI 和 Gateway 两种运行模式。共享类型集中在 knot 包。
+Argo 是一个用 Go 实现的极简 AI Agent 框架。七个模块 (deck/helm/reef/vault/sail/crew/brig) 通过包级单例调用协作，同一份核心代码编译为 CLI 和 Gateway 两种运行模式。共享类型集中在 knot 包。
 
 ## 技术栈
 
 - **语言**：Go
-- **六个模块**：deck (工具)、helm (循环)、reef (压缩)、vault (存储)、sail (模型)、crew (技能)
+- **七个模块 + 一个类型包**：deck (工具)、helm (循环)、reef (压缩)、vault (存储)、sail (模型)、crew (技能)、brig (权限门控)、knot (共享类型)
 - **双入口**：`argo run` (CLI) / `argo serve` (Gateway)，共享同一核心代码
 - **状态持有**：调用方持有会话状态，helm 是纯函数
 
@@ -21,6 +21,8 @@ Argo 是一个用 Go 实现的极简 AI Agent 框架。六个模块 (deck/helm/r
 | **vault** | 对话记录持久化(transcript) + 跨会话长期记忆 | Go 文件/存储操作 |
 | **sail** | 多模型API管理。屏蔽Anthropic/OpenAI/DeepSeek等差异 | Go 接口 + adapter模式 |
 | **crew** | SKILL.md技能加载与调度。渐进式披露注入system prompt | Go 文件扫描 + SKILL.md解析 |
+| **brig** | 工具调用权限门控。Allow/Ask/Deny 三态裁决，规则即记忆 | Go 规则引擎 + 静态规则库 |
+| **knot** | 跨模块共享类型：Message/Event/ToolUse/Config/ConfirmFunc | Go 接口 + 结构体 |
 
 ## 跨模块接口契约
 
@@ -31,6 +33,7 @@ Argo 是一个用 Go 实现的极简 AI Agent 框架。六个模块 (deck/helm/r
 - **vault**：`Recall()` / `Store()` / `Append()` — 长期记忆存取（待建）
 - **sail**：`Chat(ctx, modelName, req)` / `Window(modelName)` / `DefaultModel()` — LLM 调用 + 模型配置
 - **crew**：`List()` / `Instructions(name)` — 技能加载（待建）
+- **brig**：`Evaluate(tu)` / `Append(tool, pattern, action, source)` / `Snapshot()` / `Restore()` — 权限门控
 
 ## 数据流
 
@@ -45,6 +48,7 @@ argo run / argo serve
   ├── reef   就绪 → 等待 helm 调用
   ├── crew 扫描 → 加载 ~/.argo/skills/ 下的 SKILL.md
   ├── sail   就绪 → 等待 helm 调用
+  ├── brig   就绪 → NewEngine() 加载静态规则
   │
   └── helm   就绪 → 等待用户输入
 ```
@@ -69,7 +73,8 @@ helm.RunLoop()
   │
   ├── 3. 无 tool_use → 退出
   │
-  ├── 4. deck.Lookup() + Tool.Execute()   // 逐条执行，发 toolUseDone
+  ├── 4. deck.Lookup() → brig.Evaluate() → Tool.Execute()
+  │      // brig 判定 Allow/Ask/Deny，Ask 时 confirm 征求用户
   │
   ├── 5. 结果注入 state.Messages          // assistant + tool 消息
   │
@@ -104,6 +109,7 @@ argo/
 │   ├── reef/                  // 上下文压缩模块
 │   ├── vault/                 // 存储模块
 │   ├── sail/                  // 模型管理模块
+│   ├── brig/                  // 权限门控模块
 │   └── crew/                  // 技能管理模块
 └── docs/                      // 设计文档
 ```

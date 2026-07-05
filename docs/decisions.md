@@ -210,7 +210,7 @@
 
 ## DEC-017：deck MVP 阶段无权限/授权机制
 
-**状态**：✅ 现行
+**状态**：❌ 已废弃（替代者 [DEC-027](#dec-027brig-规则引擎门控设计))
 
 **日期**：2026-07-03
 
@@ -354,3 +354,19 @@
 **替代方案**：
 - 重试全部放 `Chat()` 层 — 需要改变 `doChat` 签名为同步 HTTP 调用 + 在 `Chat()` 中做重试循环，增加复杂度。
 - 重试全部放 helm 层 — helm 需要解析 EventError、判断重试、重新调 `sail.Chat()`，循环控制复杂。
+
+## DEC-027：brig 规则引擎门控设计
+
+**状态**：✅ 现行
+
+**日期**：2026-07-05
+
+**决策**：新建 `brig` 包，在 helm.RunLoop 工具执行前插入权限审批门控。核心设计：(1) 三态裁决 Allow/Ask/Deny；(2) Rule 统一结构 `{Tool, Pattern, Action, Source}` 代替 allowedDirs/allowedDomains/allowedTools 三个独立 map；(3) 用户确认 Ask 后追加 Dynamic Allow 规则到 rules 列表（规则即记忆）；(4) ConfirmFunc 回调代替 Approver 接口；(5) brig 独立于 deck，不侵入 Tool 接口；(6) 各 session 持有私有 Engine 实例，动态规则不跨 session。
+
+**背景**：DEC-017 判定 deck MVP 阶段不做权限机制，把审批留到后续迭代。kilocode 和 opencode 都用规则列表做"已审批记忆"——用户选 "always" 追加一条 allow 规则，而不是用 allowedDirs/allowedDomains 等独立缓存 map。这两个参考项目中权限系统均在 agent 循环层实现，不侵入工具接口。
+
+**选择**：brig 在 helm 层做门控。RunLoop 签名扩展为 `RunLoop(ctx, state, confirm, eng)`，confirm 和 eng 为 session 级依赖注入。Evaluate 遍历 rules 做 pattern 匹配——Deny 立即拒绝，Ask 回调 confirm 征求用户意见，Allow 直接执行。动态规则纯内存（MVP 不持久化），预留 Snapshot/Restore 接口供 vault 后续调用。
+
+**替代方案**：
+- 在 deck 层做权限（Tool 接口加 Ask 方法）— 侵入工具接口，所有工具实现都需改动。
+- Approver 接口（含 Allow/Ask/Deny 方法）— 比 ConfirmFunc 重，kilocode/opencode 都用回调而非接口。

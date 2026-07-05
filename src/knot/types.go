@@ -115,6 +115,29 @@ type ToolResult struct {
 	Metadata map[string]any
 }
 
+// ConfirmFunc 用户确认回调：RunLoop 判定工具调用为 Ask 时调用。
+// tu 为待确认的工具调用，reason 为需要确认的原因。
+// 返回 true 表示用户同意执行，调用方追加动态 Allow 规则后继续。
+type ConfirmFunc func(tu ToolUse, reason string) (bool, error)
+
+// 工具参数键常量——deck、brig、sail 共用的规范字段名。
+// 新增工具或参数时在此处追加，不各处硬编码字符串字面量。
+const (
+	ParamCmd     = "cmd"        // bash：shell 命令字符串
+	ParamPath    = "path"       // read/write/edit/grep/glob：文件路径
+	ParamURL     = "url"        // web_fetch：请求 URL
+	ParamContent = "content"    // write：写入内容
+	ParamOldStr  = "old_string" // edit：待替换的原始文本
+	ParamNewStr  = "new_string" // edit：替换后的新文本
+	ParamPattern = "pattern"    // grep/glob：匹配模式
+	ParamQuery   = "query"      // web_search：搜索词
+	ParamArgs       = "args"        // CLI 工具：传给外部二进制的参数
+	ParamLimit      = "limit"       // read/grep/glob：结果上限
+	ParamOffset     = "offset"      // read：起始行号
+	ParamReplaceAll = "replace_all" // edit：是否替换全部匹配
+	ParamName       = "name"        // lookup：要查询的工具名
+)
+
 // ConfigPath 返回全局配置文件路径：$ARGO_HOME/config.json 或 ~/.argo/config.json
 func ConfigPath() (string, error) {
 	if home := os.Getenv("ARGO_HOME"); home != "" {

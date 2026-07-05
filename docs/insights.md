@@ -83,4 +83,42 @@ str_replace 风格校验：
 
 **支撑的编程工作流**：冲刺-回归（spike-and-return）、角色分离（分析/实现分支并存）、并行假设调试（同 bug 多方案并行探索）。
 
-**为什么 Argo 不做**：所有正面评价均来自编程 Agent 场景。通用 Agent（客服、教练、调研）没有"回到过去节点重试另一条路"的需求——对话分叉是代码探索的刚需，不是通用对话的刚需。保留此洞见，等 Argo 的 coding 场景用户需求出现时再引入。
+## OpenAI 兼容 API 的 SSE 流式 tool call 格式
+
+**来源**：对 DeepSeek API 的三次实际调用测试（2026-07-05）
+
+**核心发现**：
+
+1. **`function.arguments` 是逐字符增量片段，不是完整 JSON** — 一次 `{"cmd": "ls -la /tmp"}`（21 字符 JSON）被拆成了 14 个 SSE chunk 逐字推送。每个 chunk 的 `arguments` 只有 1-3 个字符。
+
+2. **首块含 id + name + 空 arguments** — tool call 的第一个 chunk 同时携带 `id`、`function.name` 和空的 `function.arguments`。后续 chunk 只含 `function.arguments` 片段，不含 id 和 name。必须靠 `index` 维持关联。
+
+3. **多个 tool call 可以在同一个 chunk 中同时出现** — 一个 SSE chunk 的 `delta.tool_calls` 数组可以包含多个不同 index 的 tool call。
+
+4. **参数字段名由工具 schema 完全决定** — 模型生成的 `arguments` JSON 中的键名严格遵循 API 请求中 `tools[x].function.parameters.properties` 的定义。定义为 `"cmd"` 则模型填 `"cmd"`，定义为 `"path"` 则填 `"path"`。
+
+**实际数据示例**：
+
+```
+第一个 tool call (bash):
+  Chunk 1: index=0, id=call_00_xxx, name="bash",   arguments=""       ← 首块
+  Chunk 2: index=0,                                 arguments="{"      ← 逐字增量
+  Chunk 3: index=0,                                 arguments="""
+  Chunk 4: index=0,                                 arguments="cmd"
+  ...
+  Chunk 14: index=0,                                arguments="}"
+  拼接后: {"cmd": "ls -la /tmp"}
+
+同时出两个 tool call:
+  Chunk 1: index=0, id=call_00_xxx, name="web_fetch", arguments=""
+           index=1, id=call_01_xxx, name="read",     arguments=""      ← 同一 chunk
+```
+
+**对 Argo sail adapter 的设计影响**：
+
+- 不能拿单个 chunk 的 `arguments` 直接当参数用，必须在 `streamState` 中按 index 累积
+- `EventToolUseStart` 在首块发出（只有 id + name，给 UI 用），`EventToolUseDelta` 在 flush 时发出（累积完成的完整 Parameters）
+- `[DONE]` 标记触发 flush，刚好是 data → 门控 → 执行的正确时序
+
+---
+通用 Agent（客服、教练、调研）没有"回到过去节点重试另一条路"的需求——对话分叉是代码探索的刚需，不是通用对话的刚需。保留此洞见，等 Argo 的 coding 场景用户需求出现时再引入。

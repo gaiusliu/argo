@@ -1,8 +1,8 @@
 # Argo 项目指南
 
-## 调用 code-review skill 时的规则
+## 调用 two-axis-review skill 时的规则
 
-`.agents/skills/code-review` 的 Step 4 会向两个子代理发送完整 diff。为保持 Standards/Spec 上下文隔离：
+`.claude/skills/two-axis-review` 的 Step 4 会向两个子代理发送完整 diff。为保持 Standards/Spec 上下文隔离：
 
 1. Step 1 的 `git diff` 按文件类型拆分——代码文件（`*.go`）和文档文件分开发送
 2. 两个子代理只收到 `*.go` 文件的 diff
@@ -33,3 +33,11 @@
 
 - 项目 `.claude/settings.json` 维护了无需审批的 Bash 命令白名单
 - 如遇到反复审批的常用命令，主动询问用户是否加入白名单
+
+## 参考项目
+
+本地 `c:\Users\Gaiusliu\Desktop\code\` 下的三个 AI coding agent 项目，均已建立 CodeGraph 代码图谱（`.codegraph/`），可通过 `projectPath` 参数跨项目查询：
+
+- **pi**（`code/pi/`）—— Anthropic 官方 AI coding agent（TypeScript），核心逻辑在 `packages/coding-agent/src/core/`
+- **kilocode**（`code/kilocode/`）—— VS Code 插件 AI coding agent（TypeScript + Effect），核心逻辑在 `packages/core/src/`
+- **opencode**（`code/opencode/`）—— SST 开源的 AI coding agent（TypeScript monorepo），核心逻辑在 `packages/core/src/`
