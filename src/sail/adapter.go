@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -35,17 +36,43 @@ type openAIToolFunc struct {
 	Parameters  map[string]any `json:"parameters,omitempty"`
 }
 
+// openAIToolCall assistant 消息中的工具调用条目
+type openAIToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function openAIToolCallFn `json:"function"`
+}
+
+// openAIToolCallFn 工具调用的函数元数据
+type openAIToolCallFn struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
 // openAIMsg 单条消息
 type openAIMsg struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string            `json:"role"`
+	Content    string            `json:"content"`
+	ToolCallID string            `json:"tool_call_id,omitempty"`
+	ToolCalls  []openAIToolCall  `json:"tool_calls,omitempty"`
 }
 
 // buildOpenAIBody 将 knot.ChatRequest 转为 OpenAI JSON 请求体
 func buildOpenAIBody(req knot.ChatRequest, modelName string) ([]byte, error) {
 	msgs := make([]openAIMsg, len(req.Messages))
 	for i, m := range req.Messages {
-		msgs[i] = openAIMsg{Role: string(m.Role), Content: m.Content}
+		msg := openAIMsg{Role: string(m.Role), Content: m.Content, ToolCallID: m.ToolCallID}
+	if len(m.ToolCalls) > 0 {
+		tcs := make([]openAIToolCall, len(m.ToolCalls))
+		for j, tc := range m.ToolCalls {
+			tcs[j] = openAIToolCall{
+				ID: tc.ID, Type: "function",
+				Function: openAIToolCallFn{Name: tc.Name, Arguments: tc.Arguments},
+			}
+		}
+		msg.ToolCalls = tcs
+	}
+	msgs[i] = msg
 	}
 	// 转换 knot.Tool → openAITool
 	tools := make([]openAITool, 0, len(req.Tools))
@@ -222,6 +249,7 @@ func parseSSE(ctx context.Context, body io.ReadCloser, out chan<- knot.Event) {
 			continue
 		}
 		data := strings.TrimPrefix(line, "data: ")
+		slog.Debug("SSE chunk", "raw", data)
 
 		// [DONE] → flush 所有活跃 block 后关闭 channel
 		if data == "[DONE]" {
@@ -261,7 +289,6 @@ func doChat(ctx context.Context, apiKey, baseURL, modelName string, req knot.Cha
 		return nil, fmt.Errorf("sail: build body: %w", err)
 	}
 
-	url := baseURL + "/v1/chat/completions"
 	const maxRetries = 3
 	var retryDelay time.Duration // 下次重试前的等待时间
 
@@ -278,7 +305,7 @@ func doChat(ctx context.Context, apiKey, baseURL, modelName string, req knot.Cha
 			}
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("sail: new request: %w", err)
 		}

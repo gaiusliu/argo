@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -653,9 +654,24 @@ func callSearchMCP(ctx context.Context, baseURL, toolName string, args map[strin
 		return "", fmt.Errorf("read response: %w", err)
 	}
 
+	// 按 Content-Type 提取响应体：SSE 格式（text/event-stream）需剥 data: 壳
+	body := respBytes
+	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+		// 按双换行分割事件，取第一个事件的 data 字段拼接
+		events := bytes.Split(respBytes, []byte("\n\n"))
+		var b strings.Builder
+		for _, line := range bytes.Split(events[0], []byte("\n")) {
+			if bytes.HasPrefix(line, []byte("data: ")) {
+				b.Write(line[6:]) // 去掉 "data: " 前缀
+			}
+		}
+		body = []byte(b.String())
+	}
+
 	// 解析 JSON-RPC 响应，提取 result.content[0].text
 	var rpcResult mcpRPCResult
-	if err := json.Unmarshal(respBytes, &rpcResult); err != nil {
+	if err := json.Unmarshal(body, &rpcResult); err != nil {
+		slog.Error("web_search 响应解析失败", "endpoint", baseURL, "status", resp.StatusCode, "raw", string(respBytes))
 		return "", fmt.Errorf("parse response: %w", err)
 	}
 	if len(rpcResult.Result.Content) == 0 {

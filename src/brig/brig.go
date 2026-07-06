@@ -3,6 +3,7 @@
 package brig
 
 import (
+	"log/slog"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -94,15 +95,16 @@ func scopeKey(toolName, raw string) string {
 
 // formatReason 生成统一格式的门控原因描述
 func formatReason(tc ToolCall, suffix string) string {
-	return "tool name: " + tc.ToolName + ", raw params: " + tc.RawParam + " - " + suffix
+	return "tool name: " + tc.ToolName + " - " + suffix
 }
 
 // Evaluate 对工具调用做门控判定，返回裁决和原因描述。
 // 流程：静态规则匹配（Deny > Allow > Ask）→ 已审批检查。
 func (e *Engine) Evaluate(tu knot.ToolUse) (Verdict, string) {
 	cfg, _ := knot.GetConfig()
-	tc := ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, getRawParam(tu)), WorkingDir: cfg.WorkingDir}
+	tc := ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: cfg.WorkingDir}
 	verdict, reason := resolveStaticRules(e.staticRules, tc)
+	slog.Debug("门控判定", "tool", tu.Name, "result", verdict, "reason", reason)
 	switch verdict {
 	case Deny:
 		return Deny, reason
@@ -127,7 +129,7 @@ func (e *Engine) Approve(tu knot.ToolUse) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	cfg, _ := knot.GetConfig()
-	e.userApprovals[ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, getRawParam(tu)), WorkingDir: cfg.WorkingDir}] = struct{}{}
+	e.userApprovals[ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: cfg.WorkingDir}] = struct{}{}
 }
 
 // Snapshot 返回所有动态规则的快照，供持久化使用。
@@ -140,71 +142,6 @@ func (e *Engine) Restore(rules []Rule) {
 
 }
 
-// getRawParam 从工具参数中取原始输入字符串——无截断、无拆分、无信息损失。
-// 依赖上游（sail adapter）已将 API 返回的 JSON arguments 解析为扁平 map。
-func getRawParam(tu knot.ToolUse) string {
-	if raw := fieldFromArgs(tu.Name, tu.Parameters); raw != "" {
-		return raw
-	}
-	// adapter flush() JSON 解析失败时的降级：Parameters 中只有 {"args": "原始字符串"}
-	if raw, ok := tu.Parameters[knot.ParamArgs].(string); ok {
-		return raw
-	}
-	return ""
-}
-
-// toolParamKeys 工具名 → 门控使用的参数字段名（审批键来源）。
-// 新增工具时在此追加一行即可，getRawParam 和 scopeKey 通过此表自动适配。
-var toolParamKeys = map[string]string{
-	"bash":      knot.ParamCmd,
-	"write":     knot.ParamPath,
-	"edit":      knot.ParamPath,
-	"read":      knot.ParamPath,
-	"grep":      knot.ParamPath,
-	"web_fetch": knot.ParamURL,
-}
-
-// fieldFromArgs 从已解析的参数 map 中按工具名取对应的字段值。
-// 映射关系由 toolParamKeys 表维护，不再为每个工具名编写硬编码分支。
-func fieldFromArgs(name string, params map[string]any) string {
-	if key, ok := toolParamKeys[name]; ok {
-		val, _ := params[key].(string)
-		return val
-	}
-	return ""
-}
-
-// matchPattern 判断目标字符串是否匹配规则模式，支持六种匹配方式。
-//
-// 匹配按优先级依次尝试，命中即返回（不继续后续 case）：
-//
-//  1. 精确匹配 — target == pattern
-//     防止：规则中写死固定字符串的场景
-//     示例：deny "rm -rf /" 拦截精确命令，deny "127.0.0.1" 拦截精确域名
-//
-//  2. 中间通配 *word* — target 任意位置包含 word
-//     防止：敏感文件名隐藏在深层路径中
-//     示例：sensitiveFiles "*credentials*" 匹配 "/home/.aws/credentials"、"app/config/credentials.json"
-//
-//  3. 前导通配 *.ext — target 以 .ext 结尾
-//     防止：读取/搜索特定后缀的凭证/密钥文件
-//     示例：sensitiveFiles "*.pem" 匹配 "/app/key.pem"、"~/.ssh/id_rsa.pem"
-//
-//  4. 目录通配 dir/* — target 在目录 dir/ 下
-//     防止：用户确认后对同目录下所有子路径自动 Allow
-//     示例：动态规则 "src/*" 匹配 "src/internal"、"src/brig/file.go"
-//     保留尾部 "/" 避免 "src" 误匹配 "srcnotdir"
-//
-//  5. 后缀通配 prefix* — target 以 prefix 开头，或 target 的文件名以 prefix 开头
-//     防止：对同前缀命令/文件批量生效
-//     示例：safeCommands "go version*" 匹配 "go version -m"
-//     sensitiveFiles ".env*" 匹配 "/app/.env.local"（通过 basename 匹配）
-//
-//  6. 反向前缀 — target 以 pattern（纯文本，无通配符）开头
-//     防止：危险命令带任意参数时绕过单语规则
-//     示例：dangerCommands "rm" 匹配 "rm -rf /"、"rm file.txt"
-//     safeCommands  "ls" 匹配 "ls -la"
-//
 // isBoundary 判断字符串是否为空或首字符为合法边界符（空格、路径分隔符）。
 // case 6 使用此函数防止前缀误匹配——pattern 匹配到的位置之后必须是边界。
 func isBoundary(rest string) bool {

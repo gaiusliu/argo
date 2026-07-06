@@ -1,9 +1,13 @@
 # 005-brig-fix
 
-**日期**：2026-07-05 ~
-**状态**：⏳ 待开始
+**日期**：2026-07-05 ~ 2026-07-06
+**状态**：✅ 已完成（被全量 v2 重写 + 后续代码审查修复取代）
 **涉及模块**：brig、helm、knot
 **来源**：code-review 对 004-brig-mvp 的审查
+
+> ⚠️ **本文档描述的是对 brig v1 的 code-review 修复计划**。这些修复已执行，但随后 brig 被全量重写为 v2（见 [docs/modules/brig/design.md](../../modules/brig/design.md)）。
+>
+> 本文档不再反映当前代码状态，仅保留作为历史参考。
 
 ## 目标
 
@@ -112,12 +116,14 @@ denyRules 中写的是精确完整命令，但 extractSubCommands 把命令拆�
 - 每个函数不超过 50 行
 - 无匹配规则时的默认行为从 Allow 改为 Ask（#10），需要确认调用方兼容
 
-## 整体开发状态
+## 整体开发状态（历史记录）
 
-| 功能 | 状态 | 依赖 |
+> 以下功能已在 v1 代码上完成修复，随后 v1 被废弃、v2 重写取代。当前代码状态见 `src/brig/` 和 `docs/modules/brig/design.md`。
+
+| 功能 | 状态 | 备注 |
 |------|------|------|
-| matchPattern 重写 | ⏳ | — |
-| denyRules 原始参数匹配 | ⏳ | matchPattern 重写完成 |
-| extractDomain scheme 补全 | ⏳ | — |
-| 路径规范化 | ⏳ | — |
-| 独立修复 #7 #9 #10 #11 #12 #13 | ⏳ | 核心修复完成后 |
+| matchPattern 重写（3→6 种） | ✅ | 已重写，并融入 v2 设计 |
+| denyRules 原始参数匹配 | ✅ | 已重写为 resolveStaticRules 首命中机制 |
+| extractDomain scheme 补全 | ✅ | 已重写为 scopeKey 域名提取 |
+| 路径规范化 | ✅ | filepath.Abs + Clean |
+| 独立修复 #7 #9 #10 #11 #12 #13 | ✅ | go fmt 归类、SSRF 扩展、default Ask、Restore 去重、sensitiveFiles 去重 |

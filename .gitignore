@@ -1,0 +1,8 @@
+# Binary
+argo.exe
+
+# Logs
+logs/
+
+# Go
+*.exe

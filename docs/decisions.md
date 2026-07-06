@@ -411,3 +411,45 @@ Argo 当前尚无 Session 模块，且 `WorkingDir` 需要作为 `ToolCall` 指�
 **替代方案**：
 - 保留 `DonePayload` 仅删 `Text` — 嵌套结构无意义，一个字段不值得单独一个结构体
 - 不发 `EventStart` — 消费者无法区分"channel 刚打开还没数据"和"channel 打开后无事件"，没有 start 事件就缺少明确的就绪信号
+
+## DEC-030：日志持久化自研 LogWriter，零外部依赖
+
+**状态**：✅ 现行
+
+**日期**：2026-07-07
+
+**决策**：自定义 `wake.LogWriter`（实现 `io.Writer`）处理日志文件持久化和轮转，不引入 lumberjack 等外部轮转库。`LogWriter` 喂给 `slog.NewTextHandler`，各模块直接使用 `slog.Info/Debug/Error` 写日志，不额外包装日志 API。
+
+**背景**：项目需要日志持久化能力——写文件、按日期+大小轮转、过期清理。Go 生态的标准轮转库 lumberjack 只按大小切，file-rotatelogs 只按时间切，两个都不完美覆盖需求。同时项目当前零第三方依赖，引入负担需谨慎评估。
+
+**选择**：
+- `wake.LogWriter` 自定义实现：按日期优先、大小其次轮转，启动时扫描续接当日文件、过期清理
+- 文件命名：`wake-2006-01-02.log`，同日超额切出 `.001`、`.002`…
+- 日志格式由 `slog.TextHandler` 统一处理（key=value），各模块用 `slog.With("module", "xxx")` 附加模块名
+- 日志级别由 `knot.LogConfig.Level` 配置，默认 `error`——安静运行，调试时切到 `debug`
+- 日志仅写文件，stdout/stderr 留给 CLI TUI 交互
+
+**替代方案**：
+- 引入 lumberjack — 只支持按大小轮转，不支持日期切分，需叠 file-rotatelogs 两层组合
+- 引入 file-rotatelogs — 只支持按时间轮转，大小切分非一等公民
+- 包装 wake 提供日志 API — slog 已经足够完整，额外包装是多余间接层
+
+## DEC-031：askUser 从回调模式改为 EventAsk 事件驱动
+
+**状态**：✅ 现行
+
+**日期**：2026-07-07
+
+**决策**：将工具确认交互从 `knot.AskUser` 回调（生产 goroutine 内直接写 stderr + 阻塞读 stdin）改为 `EventAsk` 事件——helm 发事件带 `chan AskResult` 回传通道，cli 消费者在事件循环内串行处理确认提示 + 读 stdin + 回传结果。
+
+**背景**：原回调模式有两个问题：(1) 生产 goroutine（helm/loop.go）直接写 stderr 做确认提示，与消费 goroutine（cli/main.go）处理 `EventToolUseDone` 的输出交错——✅ 可能出现在 ⚠️ 确认提示旁边；(2) 回调阻塞期间消费者仍在处理后续事件，时序不可控。
+
+**选择**：
+- 新增 `EventAsk` 事件类型 + `AskResult` 回复类型（`AskAllowed` / `AskDenied`）
+- helm 发 `EventAsk` 后阻塞等 `AskReply` channel，cli 消费者串行处理 `EventAsk` 后通过 channel 回传结果
+- `RunLoop` 签名去掉 `ask` 参数——确认交互不再是依赖注入，而是事件流的一部分
+- `AskResult` 用自定义类型而非 `bool`，为后续 `AskAllowedOnce` 等扩展预留
+
+**替代方案**：
+- `sync.Mutex` 锁 stderr — 只能防输出交错，不能防时序问题（🔧 在确认前打印）
+- 保持回调但移到消费者 — 需要双向 channel，实现复杂度更高

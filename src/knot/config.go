@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -77,10 +78,27 @@ func mergeConfig(dst, src *Config) {
 	if src.Deck.CLI != nil {
 		dst.Deck.CLI = src.Deck.CLI
 	}
+	// Log 子配置：非空/非零字段覆盖默认值
+	if src.Log.Dir != "" {
+		dst.Log.Dir = src.Log.Dir
+	}
+	if src.Log.Level != "" {
+		dst.Log.Level = src.Log.Level
+	}
+	if src.Log.MaxSize > 0 {
+		dst.Log.MaxSize = src.Log.MaxSize
+	}
+	if src.Log.MaxAge > 0 {
+		dst.Log.MaxAge = src.Log.MaxAge
+	}
 }
 
 // writeConfig 将配置序列化写入磁盘
 func writeConfig(path string, cfg *Config) error {
+	// 确保父目录存在
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("write config: %w", err)
@@ -110,6 +128,11 @@ var knownProviders = map[string]string{
 // GenerateDefaultConfig 扫描环境变量，生成默认配置
 func GenerateDefaultConfig() *Config {
 	cfg := &Config{
+		Log: LogConfig{
+			Level:   "error",
+			MaxSize: 100,
+			MaxAge:  7,
+		},
 		Sail: SailConfig{
 			Provider: make(map[string]ProviderConfig),
 		},

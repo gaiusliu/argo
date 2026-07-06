@@ -1,111 +1,119 @@
-# Handoff — 全面代码审查与修复
+# Handoff — wake 日志模块 + CLI REPL + 集成联调
 
 ## 背景
 
-对 argo 全量代码执行了 max-effort 级别的 code-review（9 角度并行审查 + 5 验证代理 + 1 扫查代理），发现 15 个问题。已修复 10 个代码问题、记录 1 个架构决策（DEC-028）、更新 4 份设计文档、1 个性能优化延后、2 个经讨论确认不需要改。
+本会话完成了三件事：新建 wake 日志模块、新建 CLI REPL、端到端集成联调（DeepSeek V4 Pro），修复了若干协议兼容和 UI 竞争问题。
 
-## 已完成的代码改动
+## 本次新增
 
-### 正确性修复
+### wake 日志模块（`src/wake/writer.go`）
 
-| 改动 | 文件 | 说明 |
-|------|------|------|
-| case 6 边界检查 | `brig/brig.go` | 新增 `isBoundary()` 辅助函数——match 后检查剩余文本首字符必须为边界（空/空格/tab/`/`/`\`），防止 `"rm"` 误匹配 `"rmdir"` |
-| case 4 守卫加强 | `brig/brig.go` | `len(pattern) > 1` → `len(pattern) > 2`，防止 `"/*"` 匹配所有绝对路径 |
+自定义 `LogWriter`（实现 `io.Writer`），按日期+大小自动轮转，零外部依赖。喂给 `slog.TextHandler`，各模块直用 `slog.Info/Debug/Error`。
 
-### 可维护性改进
+- 文件命名：`wake-2006-01-02.log`，同日超额切 `.001`、`.002`…
+- 轮转策略：跨天优先，同日超过 MaxSize 追加序号
+- 启动时扫描续接当日文件、清理过期日志
 
-| 改动 | 文件 | 说明 |
-|------|------|------|
-| ToolCall 有键字面量 | `brig/brig.go` | `ToolCall{tu.Name, ...}` → `ToolCall{ToolName: ..., RawParam: ..., WorkingDir: ...}`，防止字段重排静默错位 |
-| getRawParam 解耦 adapter | `brig/brig.go` + `sail/adapter.go` | `flush()` 中将 JSON arguments 解析为扁平 map；`getRawParam` 删除嵌套 JSON 解析，brig 不再感知 sail 内部格式 |
-| buildOpenAIBody 填充 Tools | `sail/adapter.go` + `knot/types.go` + `deck/builtin_tool.go` | Tool 接口新增 `ParametersSchema()`，10 个内置工具各定义 JSON Schema，adapter 中转换为 `openAITool` 数组 |
-| fieldFromArgs 查表化 | `brig/brig.go` | switch-case → `toolParamKeys` map 查表，新增工具加一行映射即可 |
-| sensitiveFiles 去重 | `brig/deny.go` | 22 条重复规则 → `sensitiveFilePatterns` + `init()` 循环生成，新增 pattern 改一处 |
-| RuleSource 移除 | `brig/brig.go` + `brig/deny.go` | 删除 `RuleSource` 类型、`Static`/`Dynamic` 常量、`Rule.Source` 字段（动态审批已改用 `userApprovals` map） |
-| 排序依赖注释 | `brig/brig.go` + `brig/deny.go` | `loadStaticRules` 和 `resolveStaticRules` 明确声明 deny 必须排在首位 |
+### CLI REPL（`src/cli/main.go`）
 
-### 关键代码变更快照
+交互式 TUI，`argo>` 提示符等待输入，支持多行（`\` 续行）、`/exit` 退出。事件循环串行消费 13 种事件类型，文本/思考/工具状态实时展示。
 
-**Tool 接口**（`knot/types.go`）：
-```go
-type Tool interface {
-    Name() string
-    Description() string
-    Source() ToolSource
-    ParametersSchema() map[string]any  // 新增：JSON Schema，供 sail 构造 tools 字段
-    Execute(ctx context.Context, params map[string]any) (ToolResult, error)
+辅助函数：
+- `confirmTool` — 独立函数，通过 stdin 询问用户确认
+- `parseLevel` — 配置字符串 → slog.Level
+
+### CLI 辅助函数（`askCLI`、`parseLevel`、`confirmTool`）
+
+`askCLI` 已改为返回 `knot.AskResult`（非 `bool`），对接 EventAsk 机制。
+
+## 关键架构改动
+
+### EventAsk 事件驱动（替代 AskUser 回调）
+
+`knot/types.go` 新增 `EventAsk` 事件类型 + `AskResult`（`AskAllowed`/`AskDenied`）。`RunLoop` 签名从 `(ctx, state, ask, eng)` 简化为 `(ctx, state, eng)`。helm 发 `EventAsk` 后阻塞等 `AskReply` channel，cli 消费者串行处理确保 UI 不交错。
+
+### Message 扩展 tool_call 关联
+
+`knot/types.go` 新增 `ToolCallDetail` 类型，`Message` 加 `ToolCallID`（role=tool 用）和 `ToolCalls`（role=assistant 用）。`sail/adapter.go` 的 `openAIMsg` 对应加了 `tool_call_id` 和 `tool_calls` JSON 字段。满足 DeepSeek 严格 OpenAI 协议要求。
+
+### getRawParam 迁移到 knot
+
+从 `brig/brig.go` 搬到 `knot/types.go`，导出为 `GetRawParam`。cli 可直接引用，不再依赖 brig。
+
+### SSE Content-Type 解析
+
+`deck/builtin_tool.go` — `callSearchMCP` 按 `Content-Type: text/event-stream` 剥 SSE 壳（`\n\n` 切事件 → 扫 `data:` 行拼接），其余 Content-Type 直解 JSON。
+
+### base_url 不做路径拼接
+
+用户从官方文档 copy-paste 完整端点 URL，`adapter.go` 不做任何拼接。
+
+## 配置
+
+`~/.argo/config.json` 当前配置 DeepSeek V4 Pro：
+
+```json
+{
+  "sail": {
+    "model": "deepseek-v4-pro",
+    "provider": {
+      "deepseek": {
+        "env": ["DEEPSEEK_API_KEY"],
+        "options": { "base_url": "https://api.deepseek.com/v1/chat/completions" },
+        "models": { "deepseek-v4-pro": { "name": "deepseek-v4-pro" } }
+      }
+    }
+  },
+  "log": { "level": "debug", "maxSize": 100, "maxAge": 7 }
 }
 ```
-
-**Rule 结构**（`brig/brig.go`）——已移除 Source 字段：
-```go
-type Rule struct {
-    Tool    string
-    Pattern string
-    Action  Verdict
-}
-```
-
-**toolParamKeys 表**（`brig/brig.go`）：
-```go
-var toolParamKeys = map[string]string{
-    "bash": ParamCmd, "write": ParamPath, "edit": ParamPath,
-    "read": ParamPath, "grep": ParamPath, "web_fetch": ParamURL,
-}
-```
-
-**isBoundary**（`brig/brig.go`）：
-```go
-func isBoundary(rest string) bool {
-    return rest == "" || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '/' || rest[0] == '\\'
-}
-```
-
-## 已记录/更新的文档
-
-| 文件 | 操作 |
-|------|------|
-| `docs/modules/brig/design.md` | 全面更新：Rule 去 Source、matchPattern 加 isBoundary、新增 toolParamKeys/sensitiveFilePatterns 节、精简冗余代码块（212→144 行） |
-| `docs/modules/knot/design.md` | Tool 接口新增 ParametersSchema 方法说明 |
-| `docs/modules/deck/design.md` | builtinTool 新增 paramsSchema 字段、内置工具表加参数列 |
-| `docs/modules/sail/design.md` | 新增 buildOpenAIBody 概念条目、flush 更新为 JSON 解析 + 扁平 Parameters |
-| `docs/decisions.md` | DEC-028：WorkingDir 暂放 Config，待 Session 模块建立后迁移 |
-
-## 经讨论确认不需要改
-
-| 原问题 | 原因 |
-|--------|------|
-| `cfg, _ := GetConfig()` 忽略错误 + sync.Once 缓存错误 | 执行流中 `sail.Chat` 先于 brig 调用 `GetConfig()` 并检查错误，brig 执行时 globalCfg 已保证非 nil |
-| parseSSE ctx 取消时双发 error | 概率小，后发的可覆盖先发的 |
-| TokenLimit 死代码 | 为后续模块准备的桩代码 |
-| case 6 中 `filepath.Base` 存在的必要性 | 已确认：让文件名 pattern（如 `.env`）能匹配深层路径（如 `/a/b/.env.local`） |
-
-## 延后事项
-
-| 事项 | 优先级 | 说明 |
-|------|--------|------|
-| 静态规则按工具分桶（`map[string][]Rule`） | P2 | 当前 ~100 条规则扁平遍历，按工具分桶可降 90% 遍历量 |
-| CLI 工具删除 | P2 | 用户计划用 bash 替代 CLI 工具，届时 `cli_tool.go`、`tool_registry.go`、`SourceCLI`、`CLIToolEntry`、`DeckConfig.CLI` 一并清理 |
-| WorkingDir 从 Config 迁到 Session | P3 | DEC-028 已记录，待 Session 模块建立后执行 |
 
 ## 当前模块状态
 
 | 模块 | 状态 |
 |------|------|
-| deck | ✅ |
-| sail | ✅ |
-| helm | ✅ |
-| brig | ✅ |
-| knot | ✅ |
+| wake | ✅ 新增 |
+| cli | ✅ 新增 |
+| deck | ✅（SSE 解析修复） |
+| sail | ✅（tool_calls 序列化） |
+| helm | ✅（EventAsk、RunLoop 去参数） |
+| brig | ✅（getRawParam 迁移、formatReason 精简） |
+| knot | ✅（ToolCallDetail、AskResult、GetRawParam 等） |
 | reef | 🚧 |
 | vault | ❌ |
 | crew | ❌ |
-| cmd | 🚧 |
-| session | ❌（新建后处理 WorkingDir 迁移 + Snapshot/Restore 实现） |
+| session | ❌ |
+
+## 文档
+
+| 文件 | 操作 |
+|------|------|
+| `docs/decisions.md` | 追加 DEC-030（自研 LogWriter）、DEC-031（EventAsk 事件驱动） |
+| `docs/modules/helm/design.md` | 全面更新：RunLoop 签名、EventAsk、tool_calls 协议、ToolUseDelta 时序 |
+| `docs/iterations/006-wake-mvp/main.md` | 新增迭代文档，含后续优化方向 |
+| `docs/handoff.md` | 已删除（过时的 sail MVP 手交文档） |
+
+## 已知问题 / 下一步
+
+用户判断接下来的重点是 **debug CLI 和工具调用的潜在问题**：
+
+1. **web_search 端点稳定性** — Parallel / Exa 两个免费 MCP 端点可能不稳定或返回异常格式。SSE 解析的边界情况待验证（多事件、空 data、非 JSON data）。
+2. **ToolUse 展示逻辑** — `seenTools` map 去重机制目前按 `toolUse.ID` 去重，需验证跨 RunLoop 调用时是否正确清理（当前在 `EventDone` 和 `EventError` 时 `clear`）。
+3. **多工具并行调用** — 已验证会出现两条 🔧 的情况（LLM 一次回复多个 tool_call），当前行为正确但未充分测试。
+4. **askCLI 被拒绝后的状态** — tool message 注入 `Status=Error`，LLM 能否正确恢复需验证。
+5. **续行符边缘情况** — `\\` 转义、空续行、续行中 EOF 等场景未充分测试。
+6. **日志文件轮转** — wake 模块的轮转逻辑尚未经过长期运行验证。
 
 ## 建议 skills
 
-- 继续开发时参考 `docs/modules/*/design.md` 了解最新设计
-- 技术决策记录在 `docs/decisions.md`，DEC-028 与本轮改动相关
-- 如需代码生成规范，参考 CLAUDE.md 中的规则
+- 继续调试时参考 `docs/modules/*/design.md` 了解各模块最新设计
+- 新增决策记录到 `docs/decisions.md`（下一个 DEC-032）
+- 迭代文档 `docs/iterations/006-wake-mvp/main.md` 可在 wake 模块闭环时更新
+
+## 编译与运行
+
+```bash
+cd <project_root>
+go build -o argo.exe ./src/cli/
+./argo.exe
+```

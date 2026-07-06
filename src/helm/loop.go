@@ -2,6 +2,8 @@ package helm
 
 import (
 	"context"
+	"encoding/json"
+	"log/slog"
 	"strings"
 
 	"argo/src/brig"
@@ -13,12 +15,13 @@ import (
 
 // RunLoop 执行一次 "用户输入 → 最终回复" 的 ReAct 循环。
 // state 由调用方初始化并传入，循环结束后 state.Messages 包含完整历史。
-// confirm 为工具调用 Ask 时的用户确认回调，eng 为 session 级规则引擎。
-func RunLoop(ctx context.Context, state *TurnState, ask knot.AskUser, eng *brig.Engine) (<-chan knot.Event, error) {
+// eng 为 session 级规则引擎。Ask 确认通过 EventAsk 事件与调用方交互。
+func RunLoop(ctx context.Context, state *TurnState, eng *brig.Engine) (<-chan knot.Event, error) {
 	out := newEventChannel()
 
 	go func() {
 		defer close(out)
+		slog.Debug("RunLoop 开始")
 
 		// 会话级缓存：工具列表和 system prompt 只构建一次
 		tools := deck.List()
@@ -44,6 +47,7 @@ func RunLoop(ctx context.Context, state *TurnState, ask knot.AskUser, eng *brig.
 			sailEvents, err := sail.Chat(ctx, state.ModelName, req)
 			if err != nil {
 				out <- knot.Event{Type: knot.EventError, Err: err}
+				slog.Debug("RunLoop 结束", "reason", "sail.Chat 失败")
 				return
 			}
 
@@ -54,6 +58,7 @@ func RunLoop(ctx context.Context, state *TurnState, ask knot.AskUser, eng *brig.
 			for se := range sailEvents {
 				if se.Type == knot.EventToolUseDelta && se.ToolUse.ID != "" {
 					toolUses = append(toolUses, se.ToolUse)
+					continue // 延后到工具获批后再发出
 				}
 				if se.Type == knot.EventTextDelta {
 					textBuf.WriteString(se.Delta)
@@ -61,17 +66,32 @@ func RunLoop(ctx context.Context, state *TurnState, ask knot.AskUser, eng *brig.
 				out <- se
 			}
 
-			// assistant message 注入（LLM 本轮的文本回复）
-			state.Messages = append(state.Messages, knot.Message{
-				Role:    knot.MessageRoleAssistant,
-				Content: textBuf.String(),
-			})
-
-			// 无工具调用 → 退出循环
+			// 无工具调用 → 注入纯文本 assistant message，退出循环
 			if len(toolUses) == 0 {
+				state.Messages = append(state.Messages, knot.Message{
+					Role:    knot.MessageRoleAssistant,
+					Content: textBuf.String(),
+				})
+				slog.Debug("RunLoop 结束")
 				out <- knot.Event{Type: knot.EventDone}
 				return
 			}
+
+			// 有工具调用 → assistant message 需携带 tool_calls 元数据
+			toolCalls := make([]knot.ToolCallDetail, len(toolUses))
+			for i, tu := range toolUses {
+				argsBytes, _ := json.Marshal(tu.Parameters)
+				toolCalls[i] = knot.ToolCallDetail{
+					ID:        tu.ID,
+					Name:      tu.Name,
+					Arguments: string(argsBytes),
+				}
+			}
+			state.Messages = append(state.Messages, knot.Message{
+				Role:      knot.MessageRoleAssistant,
+				Content:   textBuf.String(),
+				ToolCalls: toolCalls,
+			})
 
 			// 4. 逐条 Lookup → brig 门控 → Execute，填充 Result
 			for i := range toolUses {
@@ -90,16 +110,13 @@ func RunLoop(ctx context.Context, state *TurnState, ask knot.AskUser, eng *brig.
 					case brig.Deny:
 						tu.Result = knot.ToolResult{Status: knot.StatusError, Output: reason}
 					case brig.Ask:
-						ok, err := ask(*tu, reason)
-						if err != nil {
-							tu.Result = knot.ToolResult{Status: knot.StatusError, Output: "ask failed: " + err.Error()}
-							break
-						}
-						if !ok {
+						// 通过 EventAsk 让调用方处理用户确认
+						reply := make(chan knot.AskResult, 1)
+						out <- knot.Event{Type: knot.EventAsk, ToolUse: *tu, AskReason: reason, AskReply: reply}
+						if <-reply == knot.AskDenied {
 							tu.Result = knot.ToolResult{Status: knot.StatusError, Output: "user rejected: " + reason}
 							break
 						}
-						// 用户追加允许规则
 						eng.Approve(*tu)
 						exec = true
 					case brig.Allow:
@@ -107,13 +124,18 @@ func RunLoop(ctx context.Context, state *TurnState, ask knot.AskUser, eng *brig.
 					}
 
 					if exec {
+						// 工具获批 → 此时才通知调用方展示工具信息
+						out <- knot.Event{Type: knot.EventToolUseDelta, ToolUse: *tu}
+						slog.Debug("工具开始执行", "tool", tu.Name, "params", tu.Parameters)
 						result, err := tool.Execute(ctx, tu.Parameters)
 						if err != nil {
+							slog.Error("工具执行失败", "tool", tu.Name, "error", err)
 							tu.Result = knot.ToolResult{
 								Status: knot.StatusError,
 								Output: tu.Name + " tool use failed: " + err.Error(),
 							}
 						} else {
+							slog.Debug("工具执行成功", "tool", tu.Name, "output", result.Output)
 							tu.Result = result
 						}
 					}
@@ -126,8 +148,9 @@ func RunLoop(ctx context.Context, state *TurnState, ask knot.AskUser, eng *brig.
 			// 5. 结果注入 state.Messages，继续循环
 			for _, tu := range toolUses {
 				state.Messages = append(state.Messages, knot.Message{
-					Role:    knot.MessageRoleTool,
-					Content: tu.Result.Output,
+					Role:       knot.MessageRoleTool,
+					Content:    tu.Result.Output,
+					ToolCallID: tu.ID,
 				})
 			}
 		}

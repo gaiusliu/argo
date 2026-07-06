@@ -24,6 +24,7 @@ const (
 	EventToolUseDone   EventType = "toolUseDone"
 	EventDone          EventType = "done"
 	EventError         EventType = "error"
+	EventAsk           EventType = "ask" // 需用户确认，消费者处理后通过 Reply 回传结果
 )
 
 // MessageRole 消息角色类型
@@ -36,11 +37,20 @@ const (
 	MessageRoleSystem    MessageRole = "system"
 )
 
+// ToolCallDetail assistant 消息中单个工具调用的元数据
+type ToolCallDetail struct {
+	ID        string // 工具调用唯一 ID，对应 ToolUse.ID
+	Name      string // 工具名
+	Arguments string // JSON 序列化的参数
+}
+
 // Message 单条对话消息
 type Message struct {
 	// Role 取值为 MessageRoleSystem | MessageRoleUser | MessageRoleAssistant | MessageRoleTool
-	Role    MessageRole
-	Content string
+	Role       MessageRole
+	Content    string
+	ToolCallID string            // role=tool 时必填，关联对应的 assistant tool_call
+	ToolCalls  []ToolCallDetail  // role=assistant 时，记录本轮发起的工具调用
 }
 
 // ChatRequest LLM 调用请求
@@ -61,6 +71,15 @@ type TokenUsage struct {
 }
 
 // Event 流式事件，通过 channel 推送给调用方
+// AskResult 用户对 EventAsk 的回复
+type AskResult int
+
+const (
+	AskDenied  AskResult = iota // 用户拒绝
+	AskAllowed                  // 本次允许
+)
+
+// Event 流式事件，通过 channel 推送给调用方
 type Event struct {
 	// Type 标识事件类型，取值为各 Event* 常量
 	Type    EventType
@@ -68,6 +87,9 @@ type Event struct {
 	ToolUse ToolUse
 	Usage   TokenUsage // EventDone 时携带的消耗统计
 	Err     error
+	// EventAsk 专用
+	AskReason string
+	AskReply  chan AskResult
 }
 
 // ToolUse 工具调用，Result.Status == StatusDefault 表示待执行
@@ -135,6 +157,32 @@ const (
 	ParamName       = "name"        // lookup：要查询的工具名
 )
 
+// toolParamKeys 工具名 → 门控使用的参数字段名。
+// 新增工具时在此追加一行即可。
+var toolParamKeys = map[string]string{
+	"bash":      ParamCmd,
+	"write":     ParamPath,
+	"edit":      ParamPath,
+	"read":      ParamPath,
+	"grep":      ParamPath,
+	"web_fetch": ParamURL,
+	"web_search": ParamQuery,
+}
+
+// GetRawParam 从工具参数中取原始输入字符串。
+func GetRawParam(tu ToolUse) string {
+	if key, ok := toolParamKeys[tu.Name]; ok {
+		if val, _ := tu.Parameters[key].(string); val != "" {
+			return val
+		}
+	}
+	// adapter flush() JSON 解析失败时的降级
+	if raw, ok := tu.Parameters[ParamArgs].(string); ok {
+		return raw
+	}
+	return ""
+}
+
 // ConfigPath 返回全局配置文件路径：$ARGO_HOME/config.json 或 ~/.argo/config.json
 func ConfigPath() (string, error) {
 	if home := os.Getenv("ARGO_HOME"); home != "" {
@@ -147,11 +195,20 @@ func ConfigPath() (string, error) {
 	return filepath.Join(dir, ".argo", "config.json"), nil
 }
 
+// LogConfig 日志配置，控制 slog 输出行为及文件轮转策略
+type LogConfig struct {
+	Dir     string `json:"dir"`     // 日志目录，默认 ./logs/
+	Level   string `json:"level"`   // debug / info / warn / error，默认 error
+	MaxSize int    `json:"maxSize"` // 单文件大小上限（MB），0 使用默认 100
+	MaxAge  int    `json:"maxAge"`  // 文件保留天数，0 使用默认 7
+}
+
 // Config 全局配置，聚合各模块配置
 type Config struct {
 	WorkingDir string     `json:"-"` // 启动时 os.Getwd()，不序列化
 	Deck       DeckConfig `json:"deck"`
 	Sail       SailConfig `json:"sail"`
+	Log        LogConfig  `json:"log"`
 }
 
 // DeckConfig deck 模块配置
