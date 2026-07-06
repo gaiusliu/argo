@@ -1,12 +1,27 @@
 # 004-brig-mvp
 
-**日期**：2026-07-05 ~
-**状态**：🚧 进行中
+**日期**：2026-07-05 ~ 2026-07-06
+**状态**：🔄 已重写取代
 **涉及模块**：brig（新）、helm、knot
+
+> ⚠️ **本文档描述的是 brig 的初版设计（v1）**，该版本已于 2026-07-06 被推倒重写。
+>
+> **当前设计见 [docs/modules/brig/design.md](../../modules/brig/design.md)**。
+>
+> 初版与重写版的核心差异：
+> - **动态审批**：初版用 `Append` 泛化 pattern 追加到 rules 列表 → 重写版用 `Approve` 精确 ToolCall 指纹存入 `userApprovals` map
+> - **求值策略**：初版用 `resolveVerdict` "最后命中者胜" → 重写版用 `resolveStaticRules` 5 层固定顺序首命中即返回
+> - **Deny 处理**：初版用 `checkDeny` 独立第一层 → 重写版并入同一次遍历
+> - **参数提取**：初版用 `extractPatterns` 提炼碎片 → 重写版用 `getRawParam` 零损失提取
+> - **回调命名**：初版用 `ConfirmFunc` → 重写版用 `AskUser`
+>
+> 以下为初版设计文档原文，保留作为历史参考。
+
+---
 
 ## 目标
 
-实现工具调用的权限审批门控——`helm.RunLoop` 收到 LLM 工具调用后，先经过 `brig.Engine.Evaluate()` 判定 Allow/Ask/Deny，再决定是直接执行、走 `ConfirmFunc` 用户确认、还是直接拒绝。
+实现工具调用的权限审批门控——`helm.RunLoop` 收到 LLM 工具调用后，先经过 `brig.Engine.Evaluate()` 判定 Allow/Ask/Deny，再决定是直接执行、走 `AskUser` 用户确认、还是直接拒绝。
 
 MVP 阶段规则引擎做内存级会话状态（不持久化），但设计上预留持久化接口。不引入用户自定义规则配置。
 
@@ -17,7 +32,7 @@ MVP 阶段规则引擎做内存级会话状态（不持久化），但设计上�
 | 态 | 含义 | 后续动作 |
 |----|------|---------|
 | `Allow` | 免审批，直接执行 | RunLoop 调 `tool.Execute()` |
-| `Ask` | 需用户确认 | RunLoop 调 `ConfirmFunc` → true 则执行并追加动态规则，false 则跳过并返回 "user rejected" |
+| `Ask` | 需用户确认 | RunLoop 调 `AskUser` → true 则执行并追加动态规则，false 则跳过并返回 "user rejected" |
 | `Deny` | 直接拒绝 | RunLoop 跳过执行，返回拒绝原因给 LLM |
 
 ### Rule — 规则即记忆
@@ -56,16 +71,16 @@ Engine
 
 启动时创建 engine → 注入 RunLoop。用户确认某条工具调用后，追加动态 Allow 规则到 engine。后续同一 tool + pattern 直接 Allow。动态规则仅属于当前 session，不跨 session 共享。
 
-### ConfirmFunc — 用户交互回调
+### AskUser — 用户交互回调
 
 ```go
 // knot/types.go
-type ConfirmFunc func(tu ToolUse, reason string) (bool, error)
+type AskUser func(tu ToolUse, reason string) (bool, error)
 ```
 
 由调用方（CLI / Gateway）注入，helm 不感知实现细节：
 
-| 场景 | confirm 实现 |
+| 场景 | ask 实现 |
 |------|-------------|
 | CLI | 打印到 stderr → 读 stdin y/n |
 | Gateway | 发 SSE permission.asked → 阻塞等用户 reply |
@@ -74,10 +89,10 @@ type ConfirmFunc func(tu ToolUse, reason string) (bool, error)
 ### RunLoop 签名
 
 ```go
-func RunLoop(ctx context.Context, state *TurnState, confirm knot.ConfirmFunc, eng *brig.Engine) (<-chan knot.Event, error)
+func RunLoop(ctx context.Context, state *TurnState, ask knot.AskUser, eng *brig.Engine) (<-chan knot.Event, error)
 ```
 
-`confirm` 和 `eng` 为 session 级依赖注入，`TurnState` 只保留会话流转状态（Messages / TurnCount / ModelName）。
+`ask` 和 `eng` 为 session 级依赖注入，`TurnState` 只保留会话流转状态（Messages / TurnCount / ModelName）。
 
 ## 整体流程
 
@@ -97,8 +112,8 @@ helm.RunLoop
       │   └─ 3. 无匹配规则 → 默认 Ask
       │
       ├─ Allow → tool.Execute()
-      ├─ Ask   → confirm(tu, reason)
-      │           ├─ true  → eng.Append(tu, Allow, Dynamic)
+      ├─ Ask   → ask(tu, reason)
+      │           ├─ true  → eng.Approve(tu)
       │           │          → tool.Execute()
       │           └─ false → Result = StatusError + "user rejected"
       └─ Deny  → Result = StatusError + 拒绝原因
@@ -156,7 +171,7 @@ Evaluate("write", {filePath: "src/internal/config.go"})
 用户确认后：
 
 ```
-eng.Append({Tool: "write", Pattern: "src/internal", Action: Allow, Source: Dynamic})
+eng.Approve(tu)  // 以精确 ToolCall 指纹存入 userApprovals map
 ```
 
 ### 4. SensitiveReadRule — 敏感文件读取
@@ -219,7 +234,7 @@ func (e *Engine) Restore([]Rule)      // 反序列化后追加回 rules
 - `Engine` 线程安全（`mu` 保护动态规则），静态规则只读无锁
 - 动态规则仅做精确匹配（MVP 不做 glob），静态规则支持前缀匹配
 - 每条规则匹配按 "最后一条命中者胜" 原则，Deny > Ask > Allow 优先级
-- `ConfirmFunc` 定义在 `knot`，实现在调用方（`cmd/run` / Gateway），brig 不感知用户交互
+- `AskUser` 定义在 `knot`，实现在调用方（`cmd/run` / Gateway），brig 不感知用户交互
 - 每个函数不超过 50 行
 - 动态规则可持久化（`Snapshot` / `Restore`），MVP 不执行，但接口不阻塞设计
 
@@ -228,19 +243,19 @@ func (e *Engine) Restore([]Rule)      // 反序列化后追加回 rules
 ```
 src/
   brig/
-    brig.go      — Verdict / Rule / RuleSource / Engine{ rules, mu } / Evaluate / Append / Snapshot / Restore
+    brig.go      — Verdict / Rule / RuleSource / Engine{ rules, mu } / Evaluate / Approve / Snapshot / Restore
     deny.go      — 静态 deny 规则集 + 安全命令 + 危险命令 + 解释器 + 敏感文件
     bash.go      — bash 命令拆解 + 子命令提取
     webfetch.go  — URL 域名提取
 
-  knot/types.go  — ConfirmFunc 类型定义
+  knot/types.go  — AskUser 类型定义
 
   helm/
-    loop.go      — RunLoop(ctx, state, confirm, eng) 签名变更，集成 brig
+    loop.go      — RunLoop(ctx, state, ask, eng) 签名变更，集成 brig
     types.go     — TurnState 去掉 brig 相关字段，只保留会话流转状态
 
   cmd/run/
-    main.go      — 创建 engine + confirm + TurnState，调 RunLoop
+    main.go      — 创建 engine + ask + TurnState，调 RunLoop
 ```
 
 ## 整体开发状态
@@ -251,6 +266,6 @@ src/
 | 静态规则集（deny/safe/danger/interpreter/sensitive） | ✅ | deny.go |
 | Bash 命令拆解 | ✅ | bash.go |
 | WebFetch URL 域名提取 | ✅ | webfetch.go |
-| ConfirmFunc 类型定义 | ✅ | knot/types.go |
+| AskUser 类型定义 | ✅ | knot/types.go |
 | RunLoop 签名变更 + brig 集成 | ✅ | helm/loop.go |
-| CLI confirm 实现 + main.go | ⏳ | cmd/run/main.go |
+| CLI ask 实现 + main.go | ⏳ | cmd/run/main.go |

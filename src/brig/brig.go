@@ -3,8 +3,7 @@
 package brig
 
 import (
-	"encoding/json"
-	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -21,203 +20,158 @@ const (
 	Deny                 // 直接拒绝
 )
 
-// RuleSource 规则来源
-type RuleSource int
-
-const (
-	Static  RuleSource = iota // 代码内置，NewEngine 时加载，不可变
-	Dynamic                   // 用户确认后追加，可持久化
-)
-
 // Rule 规则即记忆 — 既是求值依据，也是已审批记录
 type Rule struct {
-	Tool    string     // 工具名（bash / write / edit / web_fetch / read / grep）
-	Pattern string     // 匹配模式（命令、目录、域名、文件路径）
-	Action  Verdict    // Allow / Ask / Deny
-	Source  RuleSource // Static / Dynamic
+	Tool    string  // 工具名（bash / write / edit / web_fetch / read / grep）
+	Pattern string  // 匹配模式（命令、目录、域名、文件路径）
+	Action  Verdict // Allow / Ask / Deny
+}
+
+type ToolCall struct {
+	ToolName   string
+	RawParam   string
+	WorkingDir string
 }
 
 // Engine 规则引擎，每个 session 持有一个实例。
 // 静态规则只读共享，动态规则由 mu 保护并发追加。
 type Engine struct {
-	rules []Rule
-	mu    sync.Mutex
+	staticRules   []Rule
+	userApprovals map[ToolCall]struct{}
+	mu            sync.Mutex
 }
 
 // NewEngine 创建引擎并加载静态规则副本。
 func NewEngine() *Engine {
 	return &Engine{
-		rules: loadStaticRules(),
+		staticRules:   loadStaticRules(),
+		userApprovals: make(map[ToolCall]struct{}),
 	}
 }
 
-// Evaluate 对工具调用做门控判定，返回裁决、原因描述和触发的 pattern。
-// 流程：原始参数 → deny 检查 → Ask/Allow 决议。deny 用 raw 零损失匹配，
-// Ask/Allow 也用 raw 直接匹配（matchPattern 六条 case 覆盖所有方向）。
-func (e *Engine) Evaluate(tu knot.ToolUse) (Verdict, string, string) {
-	raw := getRawParam(tu)
-
-	// deny 检查：原始参数直接匹配 deny 规则，不经过任何提炼
-	if verdict, matched := e.checkDeny(tu.Name, raw); verdict == Deny {
-		return Deny, fmt.Sprintf("%s %q 被策略拒绝", tu.Name, matched), matched
-	}
-
-	// raw 为空表示未知工具或无需门控的工具，默认 Ask
-	if raw == "" {
-		return Ask, fmt.Sprintf("%s 需要您确认", tu.Name), ""
-	}
-
-	// Ask/Allow 决议：单条 raw 遍历规则，最后命中者胜
-	verdict, matched := resolveVerdict(e.rules, tu.Name, raw)
-
-	switch verdict {
-	case Ask:
-		if matched != "" {
-			return Ask, fmt.Sprintf("%s %q 需要您确认", tu.Name, matched), matched
+// resolveStaticRules 遍历静态规则列表，首个命中即返回（不再取最高优先级）。
+// 正确性依赖 loadStaticRules 中规则组的排列顺序——Deny 组必须在 Allow/Ask 组之前。
+// 如需调整规则顺序，参见 deny.go 中 loadStaticRules 的注释。
+func resolveStaticRules(staticRules []Rule, tc ToolCall) (Verdict, string) {
+	for _, rule := range staticRules {
+		if rule.Tool != tc.ToolName {
+			continue
 		}
-		return Ask, fmt.Sprintf("%s 首次使用，需要您确认", tu.Name), raw
-	default:
-		return Allow, "", matched
+		if matchPattern(tc.RawParam, rule.Pattern) {
+			if rule.Action == Deny {
+				return Deny, formatReason(tc, "denied")
+			}
+
+			if rule.Action == Allow {
+				return Allow, formatReason(tc, "allowed")
+			}
+
+			if rule.Action == Ask {
+				return Ask, formatReason(tc, "permission required")
+			}
+		}
+
 	}
+	return Ask, formatReason(tc, "permission required")
 }
 
-// Append 追加一条动态规则（用户确认后调用）。
-func (e *Engine) Append(tool, pattern string, action Verdict, source RuleSource) {
+func (e *Engine) approved(call ToolCall) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.rules = append(e.rules, Rule{
-		Tool:    tool,
-		Pattern: pattern,
-		Action:  action,
-		Source:  source,
-	})
+	_, ok := e.userApprovals[call]
+	return ok
+}
+
+// scopeKey 将原始参数转为审批粒度键。web_fetch 按域名匹配，其余工具按精确参数匹配。
+func scopeKey(toolName, raw string) string {
+	if toolName == "web_fetch" && raw != "" {
+		if u, err := url.Parse(raw); err == nil && u.Host != "" {
+			return strings.ToLower(u.Host)
+		}
+	}
+	return raw
+}
+
+// formatReason 生成统一格式的门控原因描述
+func formatReason(tc ToolCall, suffix string) string {
+	return "tool name: " + tc.ToolName + ", raw params: " + tc.RawParam + " - " + suffix
+}
+
+// Evaluate 对工具调用做门控判定，返回裁决和原因描述。
+// 流程：静态规则匹配（Deny > Allow > Ask）→ 已审批检查。
+func (e *Engine) Evaluate(tu knot.ToolUse) (Verdict, string) {
+	cfg, _ := knot.GetConfig()
+	tc := ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, getRawParam(tu)), WorkingDir: cfg.WorkingDir}
+	verdict, reason := resolveStaticRules(e.staticRules, tc)
+	switch verdict {
+	case Deny:
+		return Deny, reason
+
+	case Allow:
+		return Allow, reason
+
+	case Ask:
+		if e.approved(tc) {
+			return Allow, formatReason(tc, "user approved")
+		}
+
+		return Ask, formatReason(tc, "permission required")
+	}
+
+	// Go 编译器无法证明 switch 已穷尽 Verdict 的 iota 值，保留此兜底 return
+	return Ask, formatReason(tc, "permission required")
+}
+
+// Approve 追加一条动态规则（用户确认后调用）。
+func (e *Engine) Approve(tu knot.ToolUse) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	cfg, _ := knot.GetConfig()
+	e.userApprovals[ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, getRawParam(tu)), WorkingDir: cfg.WorkingDir}] = struct{}{}
 }
 
 // Snapshot 返回所有动态规则的快照，供持久化使用。
 func (e *Engine) Snapshot() []Rule {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	var dyn []Rule
-	for _, r := range e.rules {
-		if r.Source == Dynamic {
-			dyn = append(dyn, r)
-		}
-	}
-	return dyn
+	return nil
 }
 
 // Restore 从快照恢复动态规则到当前引擎。
 func (e *Engine) Restore(rules []Rule) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	for _, r := range rules {
-		r.Source = Dynamic
-		e.rules = append(e.rules, r)
-	}
+
 }
 
 // getRawParam 从工具参数中取原始输入字符串——无截断、无拆分、无信息损失。
-// 对齐 sail adapter 的格式：Parameters["args"] 是完整 JSON 字符串，先解析再取值。
+// 依赖上游（sail adapter）已将 API 返回的 JSON arguments 解析为扁平 map。
 func getRawParam(tu knot.ToolUse) string {
-	// adapter.go 发出 {"args": "{\"cmd\":\"ls\"}"} 格式，先从 "args" 键解析
-	if raw, ok := tu.Parameters[knot.ParamArgs].(string); ok && raw != "" {
-		var parsed map[string]any
-		if json.Unmarshal([]byte(raw), &parsed) == nil {
-			return fieldFromArgs(tu.Name, parsed)
-		}
-		// JSON 解析失败（不应发生），退回直接使用 raw
+	if raw := fieldFromArgs(tu.Name, tu.Parameters); raw != "" {
 		return raw
 	}
-	return fieldFromArgs(tu.Name, tu.Parameters)
+	// adapter flush() JSON 解析失败时的降级：Parameters 中只有 {"args": "原始字符串"}
+	if raw, ok := tu.Parameters[knot.ParamArgs].(string); ok {
+		return raw
+	}
+	return ""
 }
 
-// fieldFromArgs 从已解析的参数 map 中按工具名取对应的字段值
+// toolParamKeys 工具名 → 门控使用的参数字段名（审批键来源）。
+// 新增工具时在此追加一行即可，getRawParam 和 scopeKey 通过此表自动适配。
+var toolParamKeys = map[string]string{
+	"bash":      knot.ParamCmd,
+	"write":     knot.ParamPath,
+	"edit":      knot.ParamPath,
+	"read":      knot.ParamPath,
+	"grep":      knot.ParamPath,
+	"web_fetch": knot.ParamURL,
+}
+
+// fieldFromArgs 从已解析的参数 map 中按工具名取对应的字段值。
+// 映射关系由 toolParamKeys 表维护，不再为每个工具名编写硬编码分支。
 func fieldFromArgs(name string, params map[string]any) string {
-	switch name {
-	case "bash":
-		cmd, _ := params[knot.ParamCmd].(string)
-		return cmd
-	case "write", "edit", "read", "grep":
-		path, _ := params[knot.ParamPath].(string)
-		return path
-	case "web_fetch":
-		url, _ := params[knot.ParamURL].(string)
-		return url
-	default:
-		return ""
+	if key, ok := toolParamKeys[name]; ok {
+		val, _ := params[key].(string)
+		return val
 	}
-}
-
-// checkDeny 只遍历 Action==Deny 的规则，用原始参数（raw）做匹配。
-// 与 resolveVerdict 不同——Deny 走 raw 零损失，Ask/Allow 走提炼后的 pattern。
-func (e *Engine) checkDeny(tool, raw string) (Verdict, string) {
-	if raw == "" {
-		return Allow, ""
-	}
-	for _, r := range e.rules {
-		if r.Action != Deny || r.Tool != tool {
-			continue
-		}
-		if matchPattern(raw, r.Pattern) {
-			return Deny, r.Pattern
-		}
-	}
-	return Allow, ""
-}
-
-// GeneralizePattern 将用户确认时的原始参数概括为可复用的 pattern。
-// 匹配时用 raw 零损失，保存时概括才有意义——同目录、同命令前缀、同域名自动通过。
-func GeneralizePattern(tool, raw string) string {
-	if raw == "" {
-		return ""
-	}
-	switch tool {
-	case "bash":
-		// "rm -rf /tmp/test" → 取前 2 词 → "rm -rf*"
-		words := strings.Fields(raw)
-		n := 2
-		if len(words) < n {
-			n = len(words)
-		}
-		return strings.Join(words[:n], " ") + "*"
-	case "write", "edit":
-		// "/src/internal/config.go" → "/src/internal/*"
-		dir := filepath.Dir(raw)
-		if dir == "." {
-			return "*"
-		}
-		return dir + "/*"
-	case "web_fetch":
-		// "https://api.github.com/repos/..." → "api.github.com*"
-		domain := extractDomain(raw)
-		if domain == "" {
-			return raw
-		}
-		return domain + "*"
-	default:
-		return raw
-	}
-}
-
-// resolveVerdict 遍历规则列表，用单条 raw 匹配，取最高优先级，无命中则Ask
-func resolveVerdict(rules []Rule, tool, raw string) (Verdict, string) {
-	verd := Ask
-	pat := ""
-	for i := range rules {
-		r := &rules[i]
-		if r.Tool != tool {
-			continue
-		}
-		if matchPattern(raw, r.Pattern) {
-			if verd < r.Action {
-				verd = r.Action
-				pat = r.Pattern
-			}
-		}
-	}
-
-	return verd, pat
+	return ""
 }
 
 // matchPattern 判断目标字符串是否匹配规则模式，支持六种匹配方式。
@@ -250,6 +204,13 @@ func resolveVerdict(rules []Rule, tool, raw string) (Verdict, string) {
 //     防止：危险命令带任意参数时绕过单语规则
 //     示例：dangerCommands "rm" 匹配 "rm -rf /"、"rm file.txt"
 //     safeCommands  "ls" 匹配 "ls -la"
+//
+// isBoundary 判断字符串是否为空或首字符为合法边界符（空格、路径分隔符）。
+// case 6 使用此函数防止前缀误匹配——pattern 匹配到的位置之后必须是边界。
+func isBoundary(rest string) bool {
+	return rest == "" || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '/' || rest[0] == '\\'
+}
+
 func matchPattern(target, pattern string) bool {
 	// 1. 精确匹配
 	if target == pattern {
@@ -268,7 +229,7 @@ func matchPattern(target, pattern string) bool {
 	}
 
 	// 4. 目录通配 dir/*：防止对同目录下文件批量 Allow，保留 "/" 避免前缀误匹配
-	if strings.HasSuffix(pattern, "/*") && len(pattern) > 1 {
+	if strings.HasSuffix(pattern, "/*") && len(pattern) > 2 {
 		return strings.HasPrefix(target, pattern[:len(pattern)-1])
 	}
 
@@ -278,6 +239,23 @@ func matchPattern(target, pattern string) bool {
 		return strings.HasPrefix(target, prefix) || strings.HasPrefix(filepath.Base(target), prefix)
 	}
 
-	// 6. 反向前缀：防止危险命令带参数绕过单语规则（如 "rm" 匹配 "rm -rf"）
-	return strings.HasPrefix(target, pattern) || strings.HasPrefix(filepath.Base(target), pattern)
+	// 6. 反向前缀：防止危险命令带参数绕过单语规则。
+	// 检查边界——pattern 后必须为空、空格或路径分隔符（/ 或 \），防止：
+	//   - "rm" 误匹配 "rmdir"（命令名前缀）
+	//   - "/etc/shadow" 误匹配 "/etc/shadow.bak"（文件名前缀）
+	// 同时保留 "C:\Windows\System32" 匹配子路径的能力。
+	if strings.HasPrefix(target, pattern) {
+		rest := target[len(pattern):]
+		if isBoundary(rest) {
+			return true
+		}
+	}
+	base := filepath.Base(target)
+	if strings.HasPrefix(base, pattern) {
+		rest := base[len(pattern):]
+		if isBoundary(rest) {
+			return true
+		}
+	}
+	return false
 }

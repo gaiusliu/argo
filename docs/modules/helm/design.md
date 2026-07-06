@@ -2,7 +2,7 @@
 
 ## 概述
 
-helm 是 Argo 的 Agent 核心循环。它是一个无状态的自由函数 `RunLoop`，接收一次用户输入，驱动 "LLM 调用 → 工具执行 → 结果注入 → 循环" 的完整链路，返回最终回复。helm 不持有会话状态——消息历史、回合计数等由调用方（CLI / Gateway）维护并传入。brig 规则引擎和 ConfirmFunc 回调由调用方注入，helm 在工具执行前调 brig 做权限门控。
+helm 是 Argo 的 Agent 核心循环。它是一个无状态的自由函数 `RunLoop`，接收一次用户输入，驱动 "LLM 调用 → 工具执行 → 结果注入 → 循环" 的完整链路，返回最终回复。helm 不持有会话状态——消息历史、回合计数等由调用方（CLI / Gateway）维护并传入。brig 规则引擎和 AskUser 回调由调用方注入，helm 在工具执行前调 brig 做权限门控。
 
 ## 核心概念
 
@@ -83,7 +83,7 @@ buildSystemPrompt(tools)
 | thinkingStart | 无 | 思考开始 |
 | thinkingDelta | Delta string | 增量思考 |
 | thinkingDone | 无 | 思考结束 |
-| toolUseStart | ToolUse（Result=nil） | 工具调用开始（sail 发 = LLM 请求，helm 发 = 开始执行） |
+| toolUseStart | ToolUse（Result.Status=StatusDefault） | 工具调用开始（sail 发 = LLM 请求，helm 发 = 开始执行） |
 | toolUseDelta | Delta string | 流式工具参数 |
 | toolUseDone | ToolUse（Result 已填） | 工具执行完成 |
 | done | DonePayload（Text + TokenUsage） | 全部完成，channel 关闭 |
@@ -113,7 +113,7 @@ text 和 thinking 共用 Event.Delta 字段，由 Type 区分。
 ### 流式输出
 
 - 通过 `<-chan Event` 推送事件，调用方统一消费（CLI 输出终端，Gateway 转发客户端）
-- 同一 tool_use 的 ID 出现两次：Result=nil（待执行）→ Result 填充（执行完成）
+- 同一 tool_use 的 ID 出现两次：Result.Status=StatusDefault（待执行）→ Result 填充（执行完成）
 - done 事件后 channel 关闭
 
 ### 错误处理
@@ -128,6 +128,6 @@ text 和 thinking 共用 Event.Delta 字段，由 Type 区分。
 | deck | `List()`, `Lookup(name)`, `Tool.Execute(ctx, params)` |
 | reef | `Compact(ctx, messages, tokenLimit)` |
 | sail | `Chat(ctx, modelName, req) → <-chan Event`, `Window(modelName)` |
-| brig | `Evaluate(tu) → (Verdict, reason, pattern)`, `Append(tool, pattern, action, source)` |
+| brig | `Evaluate(tu) → (Verdict, reason)`, `Approve(tu)` |
 | vault | （待建） |
 | crew | （待建） |

@@ -14,7 +14,7 @@ import (
 // RunLoop 执行一次 "用户输入 → 最终回复" 的 ReAct 循环。
 // state 由调用方初始化并传入，循环结束后 state.Messages 包含完整历史。
 // confirm 为工具调用 Ask 时的用户确认回调，eng 为 session 级规则引擎。
-func RunLoop(ctx context.Context, state *TurnState, confirm knot.ConfirmFunc, eng *brig.Engine) (<-chan knot.Event, error) {
+func RunLoop(ctx context.Context, state *TurnState, ask knot.AskUser, eng *brig.Engine) (<-chan knot.Event, error) {
 	out := newEventChannel()
 
 	go func() {
@@ -24,6 +24,8 @@ func RunLoop(ctx context.Context, state *TurnState, confirm knot.ConfirmFunc, en
 		tools := deck.List()
 		sp := buildSystemPrompt(tools)
 		sysMsg := knot.Message{Role: knot.MessageRoleSystem, Content: sp}
+
+		out <- knot.Event{Type: knot.EventStart}
 
 		for {
 			state.TurnCount++
@@ -50,8 +52,8 @@ func RunLoop(ctx context.Context, state *TurnState, confirm knot.ConfirmFunc, en
 			var textBuf strings.Builder
 
 			for se := range sailEvents {
-				if se.Type == knot.EventToolUseDelta && se.ToolUse != nil {
-					toolUses = append(toolUses, *se.ToolUse)
+				if se.Type == knot.EventToolUseDelta && se.ToolUse.ID != "" {
+					toolUses = append(toolUses, se.ToolUse)
 				}
 				if se.Type == knot.EventTextDelta {
 					textBuf.WriteString(se.Delta)
@@ -67,6 +69,7 @@ func RunLoop(ctx context.Context, state *TurnState, confirm knot.ConfirmFunc, en
 
 			// 无工具调用 → 退出循环
 			if len(toolUses) == 0 {
+				out <- knot.Event{Type: knot.EventDone}
 				return
 			}
 
@@ -76,28 +79,28 @@ func RunLoop(ctx context.Context, state *TurnState, confirm knot.ConfirmFunc, en
 
 				tool, found := deck.Lookup(tu.Name)
 				if !found {
-					tu.Result = &knot.ToolResult{
+					tu.Result = knot.ToolResult{
 						Status: knot.StatusError,
 						Output: "tool not found: " + tu.Name,
 					}
 				} else {
 					// brig 门控：判定 Allow / Ask / Deny
 					exec := false
-					switch verdict, reason, pat := eng.Evaluate(*tu); verdict {
+					switch verdict, reason := eng.Evaluate(*tu); verdict {
 					case brig.Deny:
-						tu.Result = &knot.ToolResult{Status: knot.StatusError, Output: reason}
+						tu.Result = knot.ToolResult{Status: knot.StatusError, Output: reason}
 					case brig.Ask:
-						ok, err := confirm(*tu, reason)
+						ok, err := ask(*tu, reason)
 						if err != nil {
-							tu.Result = &knot.ToolResult{Status: knot.StatusError, Output: "confirm failed: " + err.Error()}
+							tu.Result = knot.ToolResult{Status: knot.StatusError, Output: "ask failed: " + err.Error()}
 							break
 						}
 						if !ok {
-							tu.Result = &knot.ToolResult{Status: knot.StatusError, Output: "user rejected: " + reason}
+							tu.Result = knot.ToolResult{Status: knot.StatusError, Output: "user rejected: " + reason}
 							break
 						}
-						// 用户确认后概括 raw 为通用 pattern，追加动态 Allow 规则
-						eng.Append(tu.Name, brig.GeneralizePattern(tu.Name, pat), brig.Allow, brig.Dynamic)
+						// 用户追加允许规则
+						eng.Approve(*tu)
 						exec = true
 					case brig.Allow:
 						exec = true
@@ -106,18 +109,18 @@ func RunLoop(ctx context.Context, state *TurnState, confirm knot.ConfirmFunc, en
 					if exec {
 						result, err := tool.Execute(ctx, tu.Parameters)
 						if err != nil {
-							tu.Result = &knot.ToolResult{
+							tu.Result = knot.ToolResult{
 								Status: knot.StatusError,
 								Output: tu.Name + " tool use failed: " + err.Error(),
 							}
 						} else {
-							tu.Result = &result
+							tu.Result = result
 						}
 					}
 				}
 
 				// 通知调用方执行完成
-				out <- knot.Event{Type: knot.EventToolUseDone, ToolUse: tu}
+				out <- knot.Event{Type: knot.EventToolUseDone, ToolUse: *tu}
 			}
 
 			// 5. 结果注入 state.Messages，继续循环

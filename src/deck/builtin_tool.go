@@ -23,17 +23,33 @@ import (
 )
 
 type builtinTool struct {
-	name        string
-	description string
-	handler     func(ctx context.Context, params map[string]any) (knot.ToolResult, error)
+	name         string
+	description  string
+	paramsSchema map[string]any
+	handler      func(ctx context.Context, params map[string]any) (knot.ToolResult, error)
 }
 
-func (bt *builtinTool) Name() string            { return bt.name }
-func (bt *builtinTool) Description() string     { return bt.description }
-func (bt *builtinTool) Source() knot.ToolSource { return knot.SourceBuiltin }
+func (bt *builtinTool) Name() string                 { return bt.name }
+func (bt *builtinTool) Description() string          { return bt.description }
+func (bt *builtinTool) Source() knot.ToolSource      { return knot.SourceBuiltin }
+func (bt *builtinTool) ParametersSchema() map[string]any { return bt.paramsSchema }
 func (bt *builtinTool) Execute(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	result, err := bt.handler(ctx, params)
 	return postProcess(result), err
+}
+
+// prop 构造单个 JSON Schema property 定义
+func prop(typ, desc string) map[string]any {
+	return map[string]any{"type": typ, "description": desc}
+}
+
+// toolSchema 构造工具参数 JSON Schema 的快捷函数
+func toolSchema(required []string, props map[string]map[string]any) map[string]any {
+	schema := map[string]any{"type": "object", "properties": props}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema
 }
 
 // mcpRPCParams 是 JSON-RPC 2.0 tools/call 请求的参数字段
@@ -60,16 +76,84 @@ type mcpRPCResult struct {
 }
 
 var builtinTools = []*builtinTool{
-	{name: "bash", description: "Executes shell commands and returns combined output", handler: bashHandler},
-	{name: "read", description: "Reads file contents with line numbers, supports offset/limit paging", handler: readHandler},
-	{name: "write", description: "Creates or overwrites a file at the given path", handler: writeHandler},
-	{name: "edit", description: "Makes precise string replacements in a file, supports replace_all", handler: editHandler},
-	{name: "grep", description: "Searches file contents with regex, returns file:line:content matches", handler: grepHandler},
-	{name: "glob", description: "Finds files matching a glob pattern, returns matching paths", handler: globHandler},
-	{name: "list", description: "Lists all registered tools with names and descriptions", handler: listHandler},
-	{name: "lookup", description: "Gets detailed metadata for a tool by name", handler: lookupHandler},
-	{name: "web_fetch", description: "Fetches URL content and returns plain text", handler: webFetchHandler},
-	{name: "web_search", description: "Searches the web via free MCP endpoints and returns results as markdown", handler: webSearchHandler},
+	{
+		name: "bash", description: "Executes shell commands and returns combined output",
+		paramsSchema: toolSchema([]string{"cmd"}, map[string]map[string]any{
+			"cmd": prop("string", "shell 命令字符串"),
+		}),
+		handler: bashHandler,
+	},
+	{
+		name: "read", description: "Reads file contents with line numbers, supports offset/limit paging",
+		paramsSchema: toolSchema([]string{"path"}, map[string]map[string]any{
+			"path":   prop("string", "文件路径"),
+			"offset": prop("integer", "起始行号，默认 1"),
+			"limit":  prop("integer", "读取行数上限，默认 2000"),
+		}),
+		handler: readHandler,
+	},
+	{
+		name: "write", description: "Creates or overwrites a file at the given path",
+		paramsSchema: toolSchema([]string{"path", "content"}, map[string]map[string]any{
+			"path":    prop("string", "文件路径"),
+			"content": prop("string", "写入内容"),
+		}),
+		handler: writeHandler,
+	},
+	{
+		name: "edit", description: "Makes precise string replacements in a file, supports replace_all",
+		paramsSchema: toolSchema([]string{"path", "old_string", "new_string"}, map[string]map[string]any{
+			"path":        prop("string", "文件路径"),
+			"old_string":  prop("string", "待替换的原始文本"),
+			"new_string":  prop("string", "替换后的新文本"),
+			"replace_all": prop("boolean", "是否替换全部匹配，默认 false"),
+		}),
+		handler: editHandler,
+	},
+	{
+		name: "grep", description: "Searches file contents with regex, returns file:line:content matches",
+		paramsSchema: toolSchema([]string{"pattern", "path"}, map[string]map[string]any{
+			"pattern": prop("string", "正则表达式"),
+			"path":    prop("string", "搜索目录"),
+			"limit":   prop("integer", "匹配上限，默认 200"),
+		}),
+		handler: grepHandler,
+	},
+	{
+		name: "glob", description: "Finds files matching a glob pattern, returns matching paths",
+		paramsSchema: toolSchema([]string{"pattern", "path"}, map[string]map[string]any{
+			"pattern": prop("string", "glob 匹配模式"),
+			"path":    prop("string", "搜索目录"),
+			"limit":   prop("integer", "匹配上限，默认 200"),
+		}),
+		handler: globHandler,
+	},
+	{
+		name: "list", description: "Lists all registered tools with names and descriptions",
+		paramsSchema: toolSchema(nil, map[string]map[string]any{}),
+		handler: listHandler,
+	},
+	{
+		name: "lookup", description: "Gets detailed metadata for a tool by name",
+		paramsSchema: toolSchema([]string{"name"}, map[string]map[string]any{
+			"name": prop("string", "要查询的工具名"),
+		}),
+		handler: lookupHandler,
+	},
+	{
+		name: "web_fetch", description: "Fetches URL content and returns plain text",
+		paramsSchema: toolSchema([]string{"url"}, map[string]map[string]any{
+			"url": prop("string", "请求 URL，仅支持 http/https"),
+		}),
+		handler: webFetchHandler,
+	},
+	{
+		name: "web_search", description: "Searches the web via free MCP endpoints and returns results as markdown",
+		paramsSchema: toolSchema([]string{"query"}, map[string]map[string]any{
+			"query": prop("string", "搜索词"),
+		}),
+		handler: webSearchHandler,
+	},
 }
 
 // webFetchMaxSize WebFetch 响应体上限（字节）

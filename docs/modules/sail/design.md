@@ -14,7 +14,8 @@ sail 是 Argo 的 LLM 接入层——加载配置、路由 provider、发起流�
 | `parseSSE` | 逐行解析 SSE 流，`context.AfterFunc` 响应 ctx 取消，零 goroutine 泄漏 |
 | `streamState` | 流式事件状态机，跟踪 text/thinking/tool_use 三块的首个 chunk 以决定 push start 还是 delta |
 | `streamState.handleChunk` | 解析 chunk JSON → 根据当前状态判断 event type → 返回事件列表 |
-| `streamState.flush` | 流结束时关闭所有活跃 block：textDone → thinkingDone → toolUseDone |
+| `buildOpenAIBody` | 将 `knot.ChatRequest` 转为 OpenAI JSON 请求体——遍历 `req.Tools`，通过 `ParametersSchema()` 获取参数 JSON Schema，转换为 `openAITool` 数组填入 `Tools` 字段 |
+| `streamState.flush` | 流结束时关闭所有活跃 block：textDone → thinkingDone → 解析累积的 JSON arguments 为扁平 Parameters map → 发出 ToolUseDelta |
 | `APIError` | 结构化错误：Code（auth/quota/rate_limit/server_error/context_overflow/network）、Retryable、RetryAfterSeconds |
 | `classifyError` | HTTP 状态码 + 响应体 + 响应头 → `APIError`。429 内部检查 body 区分 billing 耗尽和频率限制 |
 | `LookupWindow` | knot.metadata.go：精确匹配 + 前缀匹配（版本分隔符边界），从 models.dev 缓存查找 context window |
@@ -68,7 +69,7 @@ chunk 到达
 └─ flush（[DONE] 或 EOF）
     ├─ textActive → EventTextDone
     ├─ thinkingActive → EventThinkingDone
-    └─ 遍历 toolCalls → EventToolUseDone
+    └─ 遍历 toolCalls → json.Unmarshal 累积的 arguments → 构造扁平 Parameters → EventToolUseDelta
 ```
 
 **状态转换**：reasoning → text 或 reasoning → tool_calls 时，自动先关 reasoning block（EventThinkingDone）。参考 kilocode 的 `transform()` 方法中 `isActiveReasoning` 到 `isActiveText` 的自动切换模式。

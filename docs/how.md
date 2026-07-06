@@ -22,7 +22,7 @@ Argo 是一个用 Go 实现的极简 AI Agent 框架。七个模块 (deck/helm/r
 | **sail** | 多模型API管理。屏蔽Anthropic/OpenAI/DeepSeek等差异 | Go 接口 + adapter模式 |
 | **crew** | SKILL.md技能加载与调度。渐进式披露注入system prompt | Go 文件扫描 + SKILL.md解析 |
 | **brig** | 工具调用权限门控。Allow/Ask/Deny 三态裁决，规则即记忆 | Go 规则引擎 + 静态规则库 |
-| **knot** | 跨模块共享类型：Message/Event/ToolUse/Config/ConfirmFunc | Go 接口 + 结构体 |
+| **knot** | 跨模块共享类型：Message/Event/ToolUse/Config/AskUser | Go 接口 + 结构体 |
 
 ## 跨模块接口契约
 
@@ -33,7 +33,7 @@ Argo 是一个用 Go 实现的极简 AI Agent 框架。七个模块 (deck/helm/r
 - **vault**：`Recall()` / `Store()` / `Append()` — 长期记忆存取（待建）
 - **sail**：`Chat(ctx, modelName, req)` / `Window(modelName)` / `DefaultModel()` — LLM 调用 + 模型配置
 - **crew**：`List()` / `Instructions(name)` — 技能加载（待建）
-- **brig**：`Evaluate(tu)` / `Append(tool, pattern, action, source)` / `Snapshot()` / `Restore()` — 权限门控
+- **brig**：`Evaluate(tu)` / `Approve(tu)` / `Snapshot()` / `Restore()` — 权限门控
 
 ## 数据流
 
@@ -74,7 +74,7 @@ helm.RunLoop()
   ├── 3. 无 tool_use → 退出
   │
   ├── 4. deck.Lookup() → brig.Evaluate() → Tool.Execute()
-  │      // brig 判定 Allow/Ask/Deny，Ask 时 confirm 征求用户
+  │      // brig 判定 Allow/Ask/Deny，Ask 时 ask 征求用户
   │
   ├── 5. 结果注入 state.Messages          // assistant + tool 消息
   │

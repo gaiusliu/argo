@@ -65,23 +65,17 @@ type Event struct {
 	// Type 标识事件类型，取值为各 Event* 常量
 	Type    EventType
 	Delta   string // textDelta 或 thinkingDelta，由 Type 区分
-	ToolUse *ToolUse
-	Done    *DonePayload
+	ToolUse ToolUse
+	Usage   TokenUsage // EventDone 时携带的消耗统计
 	Err     error
 }
 
-// ToolUse 工具调用，Result=nil 表示待执行
+// ToolUse 工具调用，Result.Status == StatusDefault 表示待执行
 type ToolUse struct {
 	ID         string
 	Name       string
 	Parameters map[string]any
-	Result     *ToolResult
-}
-
-// DonePayload 完成时的最终结果
-type DonePayload struct {
-	Text       string
-	TokenUsage TokenUsage
+	Result     ToolResult
 }
 
 // ToolSource 工具来源
@@ -97,6 +91,8 @@ type Tool interface {
 	Name() string
 	Description() string
 	Source() ToolSource
+	// ParametersSchema 返回工具参数的 JSON Schema，供 LLM function calling 使用。
+	ParametersSchema() map[string]any
 	Execute(ctx context.Context, params map[string]any) (ToolResult, error)
 }
 
@@ -104,7 +100,8 @@ type Tool interface {
 type ResultStatus int
 
 const (
-	StatusSuccess ResultStatus = iota
+	StatusDefault ResultStatus = iota
+	StatusSuccess
 	StatusError
 )
 
@@ -115,22 +112,22 @@ type ToolResult struct {
 	Metadata map[string]any
 }
 
-// ConfirmFunc 用户确认回调：RunLoop 判定工具调用为 Ask 时调用。
+// AskUser 用户确认回调：RunLoop 判定工具调用为 Ask 时调用。
 // tu 为待确认的工具调用，reason 为需要确认的原因。
 // 返回 true 表示用户同意执行，调用方追加动态 Allow 规则后继续。
-type ConfirmFunc func(tu ToolUse, reason string) (bool, error)
+type AskUser func(tu ToolUse, reason string) (bool, error)
 
 // 工具参数键常量——deck、brig、sail 共用的规范字段名。
 // 新增工具或参数时在此处追加，不各处硬编码字符串字面量。
 const (
-	ParamCmd     = "cmd"        // bash：shell 命令字符串
-	ParamPath    = "path"       // read/write/edit/grep/glob：文件路径
-	ParamURL     = "url"        // web_fetch：请求 URL
-	ParamContent = "content"    // write：写入内容
-	ParamOldStr  = "old_string" // edit：待替换的原始文本
-	ParamNewStr  = "new_string" // edit：替换后的新文本
-	ParamPattern = "pattern"    // grep/glob：匹配模式
-	ParamQuery   = "query"      // web_search：搜索词
+	ParamCmd        = "cmd"         // bash：shell 命令字符串
+	ParamPath       = "path"        // read/write/edit/grep/glob：文件路径
+	ParamURL        = "url"         // web_fetch：请求 URL
+	ParamContent    = "content"     // write：写入内容
+	ParamOldStr     = "old_string"  // edit：待替换的原始文本
+	ParamNewStr     = "new_string"  // edit：替换后的新文本
+	ParamPattern    = "pattern"     // grep/glob：匹配模式
+	ParamQuery      = "query"       // web_search：搜索词
 	ParamArgs       = "args"        // CLI 工具：传给外部二进制的参数
 	ParamLimit      = "limit"       // read/grep/glob：结果上限
 	ParamOffset     = "offset"      // read：起始行号
@@ -152,8 +149,9 @@ func ConfigPath() (string, error) {
 
 // Config 全局配置，聚合各模块配置
 type Config struct {
-	Deck DeckConfig `json:"deck"`
-	Sail SailConfig `json:"sail"`
+	WorkingDir string     `json:"-"` // 启动时 os.Getwd()，不序列化
+	Deck       DeckConfig `json:"deck"`
+	Sail       SailConfig `json:"sail"`
 }
 
 // DeckConfig deck 模块配置

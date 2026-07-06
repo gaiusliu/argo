@@ -1,6 +1,11 @@
 package brig
 
 // loadStaticRules 合并全部静态规则组，返回独立副本供 Engine 加载。
+//
+// 规则组加载顺序即匹配优先级：先加载的规则组先被 resolveStaticRules 遍历。
+// 因此 denyRules 必须排在第一位——确保 Deny 规则优先于 Allow/Ask 命中，
+// 否则 "rm -rf /" 可能被 dangerCommands 的 "rm" Ask 规则先拦截，绕过 Deny。
+// 新增规则组时，破坏性操作（Deny）必须放在安全命令（Allow）之前。
 func loadStaticRules() []Rule {
 	var all []Rule
 
@@ -25,170 +30,162 @@ func loadStaticRules() []Rule {
 // denyRules 不可绕过的静态拒绝规则
 var denyRules = []Rule{
 	// 破坏性命令
-	{Action: Deny, Source: Static, Tool: "bash", Pattern: "rm -rf /"},
-	{Action: Deny, Source: Static, Tool: "bash", Pattern: "mkfs"},
-	{Action: Deny, Source: Static, Tool: "bash", Pattern: "dd if="},
-	{Action: Deny, Source: Static, Tool: "bash", Pattern: ":(){ :|:& };:"},
+	{Action: Deny, Tool: "bash", Pattern: "rm -rf /"},
+	{Action: Deny, Tool: "bash", Pattern: "mkfs"},
+	{Action: Deny, Tool: "bash", Pattern: "dd if="},
+	{Action: Deny, Tool: "bash", Pattern: ":(){ :|:& };:"},
 
 	// SSRF 防护 — 禁止访问内网地址
-	{Action: Deny, Source: Static, Tool: "web_fetch", Pattern: "127.0.0.1"},
-	{Action: Deny, Source: Static, Tool: "web_fetch", Pattern: "localhost"},
-	{Action: Deny, Source: Static, Tool: "web_fetch", Pattern: "0.0.0.0"},
+	{Action: Deny, Tool: "web_fetch", Pattern: "127.0.0.1"},
+	{Action: Deny, Tool: "web_fetch", Pattern: "localhost"},
+	{Action: Deny, Tool: "web_fetch", Pattern: "0.0.0.0"},
 
 	// 系统关键文件 — 拒绝写入
-	{Action: Deny, Source: Static, Tool: "write", Pattern: "/etc/shadow"},
-	{Action: Deny, Source: Static, Tool: "edit", Pattern: "/etc/shadow"},
-	{Action: Deny, Source: Static, Tool: "write", Pattern: "C:\\Windows\\System32"},
-	{Action: Deny, Source: Static, Tool: "edit", Pattern: "C:\\Windows\\System32"},
+	{Action: Deny, Tool: "write", Pattern: "/etc/shadow"},
+	{Action: Deny, Tool: "edit", Pattern: "/etc/shadow"},
+	{Action: Deny, Tool: "write", Pattern: "C:\\Windows\\System32"},
+	{Action: Deny, Tool: "edit", Pattern: "C:\\Windows\\System32"},
 }
 
 // safeCommands 纯读取/查询类 bash 命令，直接 Allow
 var safeCommands = []Rule{
 	// 文件查看
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "ls"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "cat"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "head"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "tail"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "find"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "wc"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "du"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "df"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "stat"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "file"},
+	{Action: Allow, Tool: "bash", Pattern: "ls"},
+	{Action: Allow, Tool: "bash", Pattern: "cat"},
+	{Action: Allow, Tool: "bash", Pattern: "head"},
+	{Action: Allow, Tool: "bash", Pattern: "tail"},
+	{Action: Allow, Tool: "bash", Pattern: "find"},
+	{Action: Allow, Tool: "bash", Pattern: "wc"},
+	{Action: Allow, Tool: "bash", Pattern: "du"},
+	{Action: Allow, Tool: "bash", Pattern: "df"},
+	{Action: Allow, Tool: "bash", Pattern: "stat"},
+	{Action: Allow, Tool: "bash", Pattern: "file"},
 	// 系统信息
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "pwd"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "echo"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "printf"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "sort"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "uniq"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "cut"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "tr"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "awk"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "which"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "whereis"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "type"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "whoami"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "hostname"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "uname"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "date"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "tree"},
+	{Action: Allow, Tool: "bash", Pattern: "pwd"},
+	{Action: Allow, Tool: "bash", Pattern: "echo"},
+	{Action: Allow, Tool: "bash", Pattern: "printf"},
+	{Action: Allow, Tool: "bash", Pattern: "sort"},
+	{Action: Allow, Tool: "bash", Pattern: "uniq"},
+	{Action: Allow, Tool: "bash", Pattern: "cut"},
+	{Action: Allow, Tool: "bash", Pattern: "tr"},
+	{Action: Allow, Tool: "bash", Pattern: "awk"},
+	{Action: Allow, Tool: "bash", Pattern: "which"},
+	{Action: Allow, Tool: "bash", Pattern: "whereis"},
+	{Action: Allow, Tool: "bash", Pattern: "type"},
+	{Action: Allow, Tool: "bash", Pattern: "whoami"},
+	{Action: Allow, Tool: "bash", Pattern: "hostname"},
+	{Action: Allow, Tool: "bash", Pattern: "uname"},
+	{Action: Allow, Tool: "bash", Pattern: "date"},
+	{Action: Allow, Tool: "bash", Pattern: "tree"},
 	// 搜索
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "grep"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "rg"},
+	{Action: Allow, Tool: "bash", Pattern: "grep"},
+	{Action: Allow, Tool: "bash", Pattern: "rg"},
 	// git 只读操作
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "git status"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "git log"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "git diff"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "git show"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "git branch"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "git stash list"},
+	{Action: Allow, Tool: "bash", Pattern: "git status"},
+	{Action: Allow, Tool: "bash", Pattern: "git log"},
+	{Action: Allow, Tool: "bash", Pattern: "git diff"},
+	{Action: Allow, Tool: "bash", Pattern: "git show"},
+	{Action: Allow, Tool: "bash", Pattern: "git branch"},
+	{Action: Allow, Tool: "bash", Pattern: "git stash list"},
 	// Go 工具只读
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "go version"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "go fmt"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "go vet"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "go doc"},
+	{Action: Allow, Tool: "bash", Pattern: "go version"},
+	{Action: Allow, Tool: "bash", Pattern: "go fmt"},
+	{Action: Allow, Tool: "bash", Pattern: "go vet"},
+	{Action: Allow, Tool: "bash", Pattern: "go doc"},
 	// Docker 只读
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "docker ps"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "docker images"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "docker logs"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "docker inspect"},
+	{Action: Allow, Tool: "bash", Pattern: "docker ps"},
+	{Action: Allow, Tool: "bash", Pattern: "docker images"},
+	{Action: Allow, Tool: "bash", Pattern: "docker logs"},
+	{Action: Allow, Tool: "bash", Pattern: "docker inspect"},
 	// 包管理器只读
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "npm list"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "npm outdated"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "npm view"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "pip list"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "pip show"},
-	{Action: Allow, Source: Static, Tool: "bash", Pattern: "pip freeze"},
+	{Action: Allow, Tool: "bash", Pattern: "npm list"},
+	{Action: Allow, Tool: "bash", Pattern: "npm outdated"},
+	{Action: Allow, Tool: "bash", Pattern: "npm view"},
+	{Action: Allow, Tool: "bash", Pattern: "pip list"},
+	{Action: Allow, Tool: "bash", Pattern: "pip show"},
+	{Action: Allow, Tool: "bash", Pattern: "pip freeze"},
 }
 
 // dangerCommands 可能修改系统/文件状态的命令，需用户确认
 var dangerCommands = []Rule{
 	// 文件操作
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "rm"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "mv"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "cp"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "dd"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "mkdir"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "touch"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "ln"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "chmod"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "chown"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "chattr"},
+	{Action: Ask, Tool: "bash", Pattern: "rm"},
+	{Action: Ask, Tool: "bash", Pattern: "mv"},
+	{Action: Ask, Tool: "bash", Pattern: "cp"},
+	{Action: Ask, Tool: "bash", Pattern: "dd"},
+	{Action: Ask, Tool: "bash", Pattern: "mkdir"},
+	{Action: Ask, Tool: "bash", Pattern: "touch"},
+	{Action: Ask, Tool: "bash", Pattern: "ln"},
+	{Action: Ask, Tool: "bash", Pattern: "chmod"},
+	{Action: Ask, Tool: "bash", Pattern: "chown"},
+	{Action: Ask, Tool: "bash", Pattern: "chattr"},
 	// 网络操作
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "curl"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "wget"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "nc"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "netcat"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "ssh"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "scp"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "rsync"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "ftp"},
+	{Action: Ask, Tool: "bash", Pattern: "curl"},
+	{Action: Ask, Tool: "bash", Pattern: "wget"},
+	{Action: Ask, Tool: "bash", Pattern: "nc"},
+	{Action: Ask, Tool: "bash", Pattern: "netcat"},
+	{Action: Ask, Tool: "bash", Pattern: "ssh"},
+	{Action: Ask, Tool: "bash", Pattern: "scp"},
+	{Action: Ask, Tool: "bash", Pattern: "rsync"},
+	{Action: Ask, Tool: "bash", Pattern: "ftp"},
 	// git 写操作
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "git add"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "git commit"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "git push"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "git reset"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "git clean"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "git rebase"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "git merge"},
+	{Action: Ask, Tool: "bash", Pattern: "git add"},
+	{Action: Ask, Tool: "bash", Pattern: "git commit"},
+	{Action: Ask, Tool: "bash", Pattern: "git push"},
+	{Action: Ask, Tool: "bash", Pattern: "git reset"},
+	{Action: Ask, Tool: "bash", Pattern: "git clean"},
+	{Action: Ask, Tool: "bash", Pattern: "git rebase"},
+	{Action: Ask, Tool: "bash", Pattern: "git merge"},
 	// 包管理
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "apt"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "yum"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "brew"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "pip install"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "npm install"},
+	{Action: Ask, Tool: "bash", Pattern: "apt"},
+	{Action: Ask, Tool: "bash", Pattern: "yum"},
+	{Action: Ask, Tool: "bash", Pattern: "brew"},
+	{Action: Ask, Tool: "bash", Pattern: "pip install"},
+	{Action: Ask, Tool: "bash", Pattern: "npm install"},
 	// 进程/系统
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "kill"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "pkill"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "killall"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "systemctl"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "service"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "shutdown"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "reboot"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "mount"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "umount"},
+	{Action: Ask, Tool: "bash", Pattern: "kill"},
+	{Action: Ask, Tool: "bash", Pattern: "pkill"},
+	{Action: Ask, Tool: "bash", Pattern: "killall"},
+	{Action: Ask, Tool: "bash", Pattern: "systemctl"},
+	{Action: Ask, Tool: "bash", Pattern: "service"},
+	{Action: Ask, Tool: "bash", Pattern: "shutdown"},
+	{Action: Ask, Tool: "bash", Pattern: "reboot"},
+	{Action: Ask, Tool: "bash", Pattern: "mount"},
+	{Action: Ask, Tool: "bash", Pattern: "umount"},
 }
 
 // interpreterCommands 脚本解释器 — 无法静态分析脚本内容，需用户确认
 var interpreterCommands = []Rule{
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "python"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "python3"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "node"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "nodejs"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "go run"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "bash"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "sh"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "zsh"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "eval"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "source"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "ruby"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "perl"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "deno run"},
-	{Action: Ask, Source: Static, Tool: "bash", Pattern: "bun run"},
+	{Action: Ask, Tool: "bash", Pattern: "python"},
+	{Action: Ask, Tool: "bash", Pattern: "python3"},
+	{Action: Ask, Tool: "bash", Pattern: "node"},
+	{Action: Ask, Tool: "bash", Pattern: "nodejs"},
+	{Action: Ask, Tool: "bash", Pattern: "go run"},
+	{Action: Ask, Tool: "bash", Pattern: "bash"},
+	{Action: Ask, Tool: "bash", Pattern: "sh"},
+	{Action: Ask, Tool: "bash", Pattern: "zsh"},
+	{Action: Ask, Tool: "bash", Pattern: "eval"},
+	{Action: Ask, Tool: "bash", Pattern: "source"},
+	{Action: Ask, Tool: "bash", Pattern: "ruby"},
+	{Action: Ask, Tool: "bash", Pattern: "perl"},
+	{Action: Ask, Tool: "bash", Pattern: "deno run"},
+	{Action: Ask, Tool: "bash", Pattern: "bun run"},
 }
 
-// sensitiveFiles 敏感文件路径模式 — read/grep 命中时需用户确认
-var sensitiveFiles = []Rule{
-	{Action: Ask, Source: Static, Tool: "read", Pattern: ".env*"},
-	{Action: Ask, Source: Static, Tool: "read", Pattern: "*.pem"},
-	{Action: Ask, Source: Static, Tool: "read", Pattern: "*.key"},
-	{Action: Ask, Source: Static, Tool: "read", Pattern: "*credentials*"},
-	{Action: Ask, Source: Static, Tool: "read", Pattern: "*secret*"},
-	{Action: Ask, Source: Static, Tool: "read", Pattern: "*token*"},
-	{Action: Ask, Source: Static, Tool: "read", Pattern: "*password*"},
-	{Action: Ask, Source: Static, Tool: "read", Pattern: "id_rsa*"},
-	{Action: Ask, Source: Static, Tool: "read", Pattern: "*.pfx"},
-	{Action: Ask, Source: Static, Tool: "read", Pattern: "*.p12"},
-	{Action: Ask, Source: Static, Tool: "read", Pattern: "*.jks"},
-	{Action: Ask, Source: Static, Tool: "grep", Pattern: ".env*"},
-	{Action: Ask, Source: Static, Tool: "grep", Pattern: "*.pem"},
-	{Action: Ask, Source: Static, Tool: "grep", Pattern: "*.key"},
-	{Action: Ask, Source: Static, Tool: "grep", Pattern: "*credentials*"},
-	{Action: Ask, Source: Static, Tool: "grep", Pattern: "*secret*"},
-	{Action: Ask, Source: Static, Tool: "grep", Pattern: "*token*"},
-	{Action: Ask, Source: Static, Tool: "grep", Pattern: "*password*"},
-	{Action: Ask, Source: Static, Tool: "grep", Pattern: "id_rsa*"},
-	{Action: Ask, Source: Static, Tool: "grep", Pattern: "*.pfx"},
-	{Action: Ask, Source: Static, Tool: "grep", Pattern: "*.p12"},
-	{Action: Ask, Source: Static, Tool: "grep", Pattern: "*.jks"},
+// sensitiveFilePatterns 敏感文件匹配模式，供 read 和 grep 工具共享。
+// 新增敏感文件类型只需在此列表追加一项，避免 read 和 grep 两边不同步。
+var sensitiveFilePatterns = []string{
+	".env*", "*.pem", "*.key", "*credentials*", "*secret*",
+	"*token*", "*password*", "id_rsa*", "*.pfx", "*.p12", "*.jks",
+}
+
+// sensitiveFiles 敏感文件读取/搜索规则 — 由 sensitiveFilePatterns 按工具名生成
+var sensitiveFiles []Rule
+
+func init() {
+	for _, tool := range []string{"read", "grep"} {
+		for _, p := range sensitiveFilePatterns {
+			sensitiveFiles = append(sensitiveFiles, Rule{Action: Ask, Tool: tool, Pattern: p})
+		}
+	}
 }

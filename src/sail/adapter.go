@@ -47,10 +47,23 @@ func buildOpenAIBody(req knot.ChatRequest, modelName string) ([]byte, error) {
 	for i, m := range req.Messages {
 		msgs[i] = openAIMsg{Role: string(m.Role), Content: m.Content}
 	}
+	// 转换 knot.Tool → openAITool
+	tools := make([]openAITool, 0, len(req.Tools))
+	for _, t := range req.Tools {
+		tools = append(tools, openAITool{
+			Type: "function",
+			Function: openAIToolFunc{
+				Name:        t.Name(),
+				Description: t.Description(),
+				Parameters:  t.ParametersSchema(),
+			},
+		})
+	}
 	body := openAIReq{
 		Model:    modelName,
 		Messages: msgs,
 		Stream:   true,
+		Tools:    tools,
 	}
 	return json.Marshal(body)
 }
@@ -144,7 +157,7 @@ func (s *streamState) handleChunk(raw []byte) ([]knot.Event, error) {
 		if _, seen := s.toolCalls[tc.Index]; !seen {
 			events = append(events, knot.Event{
 				Type:    knot.EventToolUseStart,
-				ToolUse: &knot.ToolUse{ID: tc.ID, Name: tc.Function.Name},
+				ToolUse: knot.ToolUse{ID: tc.ID, Name: tc.Function.Name},
 			})
 			s.toolCalls[tc.Index] = toolCallState{id: tc.ID, name: tc.Function.Name}
 		}
@@ -169,12 +182,18 @@ func (s *streamState) flush() []knot.Event {
 		s.thinkingActive = false
 	}
 	for _, tcs := range s.toolCalls {
+		// 解析累积的 JSON arguments 为扁平 map，下游不需要感知 API 的嵌套格式
+		var params map[string]any
+		if err := json.Unmarshal([]byte(tcs.args), &params); err != nil {
+			// 解析失败时保留原始数据供排查
+			params = map[string]any{knot.ParamArgs: tcs.args}
+		}
 		events = append(events, knot.Event{
 			Type: knot.EventToolUseDelta,
-			ToolUse: &knot.ToolUse{
+			ToolUse: knot.ToolUse{
 				ID:         tcs.id,
 				Name:       tcs.name,
-				Parameters: map[string]any{knot.ParamArgs: tcs.args},
+				Parameters: params,
 			},
 		})
 	}

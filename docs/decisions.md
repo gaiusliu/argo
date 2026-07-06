@@ -361,12 +361,53 @@
 
 **日期**：2026-07-05
 
-**决策**：新建 `brig` 包，在 helm.RunLoop 工具执行前插入权限审批门控。核心设计：(1) 三态裁决 Allow/Ask/Deny；(2) Rule 统一结构 `{Tool, Pattern, Action, Source}` 代替 allowedDirs/allowedDomains/allowedTools 三个独立 map；(3) 用户确认 Ask 后追加 Dynamic Allow 规则到 rules 列表（规则即记忆）；(4) ConfirmFunc 回调代替 Approver 接口；(5) brig 独立于 deck，不侵入 Tool 接口；(6) 各 session 持有私有 Engine 实例，动态规则不跨 session。
+**决策**：新建 `brig` 包，在 helm.RunLoop 工具执行前插入权限审批门控。核心设计：(1) 三态裁决 Allow/Ask/Deny；(2) Rule 统一结构 `{Tool, Pattern, Action, Source}` 仅用于静态规则；(3) 用户确认 Ask 后以精确 `ToolCall` 指纹（工具名 + scopeKey 转换后的参数 + 工作目录）存入 `userApprovals` map，同指纹再次出现自动 Allow；(4) `AskUser` 回调代替 Approver 接口；(5) brig 独立于 deck，不侵入 Tool 接口；(6) 各 session 持有私有 Engine 实例，动态审批不跨 session；(7) 工作目录在 `knot.LoadConfig` 时通过 `os.Getwd()` 捕获并缓存，作为 `ToolCall` 指纹的一部分。
 
 **背景**：DEC-017 判定 deck MVP 阶段不做权限机制，把审批留到后续迭代。kilocode 和 opencode 都用规则列表做"已审批记忆"——用户选 "always" 追加一条 allow 规则，而不是用 allowedDirs/allowedDomains 等独立缓存 map。这两个参考项目中权限系统均在 agent 循环层实现，不侵入工具接口。
 
-**选择**：brig 在 helm 层做门控。RunLoop 签名扩展为 `RunLoop(ctx, state, confirm, eng)`，confirm 和 eng 为 session 级依赖注入。Evaluate 遍历 rules 做 pattern 匹配——Deny 立即拒绝，Ask 回调 confirm 征求用户意见，Allow 直接执行。动态规则纯内存（MVP 不持久化），预留 Snapshot/Restore 接口供 vault 后续调用。
+**选择**：brig 在 helm 层做门控。RunLoop 签名扩展为 `RunLoop(ctx, state, ask, eng)`，ask 和 eng 为 session 级依赖注入。Evaluate 分两阶段——先遍历 5 层静态规则（denyRules → safeCommands → dangerCommands → interpreterCommands → sensitiveFiles），首命中即返回；静态规则返回 Ask 时再查 `userApprovals` map，命中则自动 Allow。`Approve` 以 `scopeKey` 处理后的指纹存入 map，不做泛化。Snapshot/Restore 预留接口，当前为空桩。
 
 **替代方案**：
 - 在 deck 层做权限（Tool 接口加 Ask 方法）— 侵入工具接口，所有工具实现都需改动。
-- Approver 接口（含 Allow/Ask/Deny 方法）— 比 ConfirmFunc 重，kilocode/opencode 都用回调而非接口。
+- Approver 接口（含 Allow/Ask/Deny 方法）— 比 AskUser 重，kilocode/opencode 都用回调而非接口。
+
+## DEC-028：`WorkingDir` 暂放在 Config 中，待 Session 模块提取
+
+**状态**：✅ 现行
+
+**日期**：2026-07-06
+
+**决策**：工作目录 `Config.WorkingDir` 当前通过 `knot.LoadConfig` 中 `os.Getwd()` 获取并缓存，标记 `json:"-"` 不序列化。已知这是不正确的分层——`Config` 是 JSON 配置文件模型，工作目录属于运行时会话状态。待 Session 模块（vault/reef 之后的计划）建立后，将 `WorkingDir` 迁移到 Session 对象，`Config` 恢复为纯 JSON 派生模型。
+
+**背景**：参考 pi、opencode、kilocode 三个项目，cwd 均存储在 Session 层而非 Config 层：
+
+| 项目 | cwd 存放位置 | 传递方式 |
+|------|-------------|---------|
+| pi | `SessionHeader.cwd`（JSONL session 文件头部） | `SessionManager.create(cwd)` 构造时传入 |
+| opencode | `session.directory` | `session.create()` 服务端自动捕获，返回时带 `directory` |
+| kilocode | 同 opencode | `session.directory` 在 `SessionInfo` 中 |
+
+Argo 当前尚无 Session 模块，且 `WorkingDir` 需要作为 `ToolCall` 指纹的一部分参与审批匹配。暂时的妥协是在 `Config` 中承载，后续迁移路径明确：`Config.WorkingDir` → `Engine.workingDir`（构造参数）→ 未来 `Session.WorkingDir`。
+
+**替代方案**：
+- 直接在 `Engine.NewEngine(workingDir)` 传入 — 语义正确，但 entry point（cmd/run）尚未开发，脚手架不完整，暂时不值得为这一个字段多写初始化代码。
+- `sync.Once` 内缓存错误的设计 — 已知隐患：`os.Getwd()` 失败后 `globalErr` 永久非 nil，会导致 `brig.Evaluate/Approve` 访问 nil cfg panic。因为当前执行流中 `sail.Chat` 先于 brig 调用 `GetConfig()` 并检查错误，暂时受保护。Session 模块建立时一并修复。
+
+## DEC-029：Event 模型简化——删除 DonePayload，平铺 Usage + 补齐生命周期事件
+
+**状态**：✅ 现行
+
+**日期**：2026-07-06
+
+**决策**：删除 `DonePayload` 结构体，将 `TokenUsage` 平铺到 `Event.Usage` 字段；同时补齐 `EventStart` 和 `EventDone` 两个生命周期边界事件。
+
+**背景**：原设计在 Event 上嵌套 `Done DonePayload`，其中 `DonePayload.Text` 存放最终文本回复。但流式事件链路是 `textStart → textDelta → ... → textDone`，消费者在 `done` 之前已通过所有 `textDelta` 收完全文。`Text` 字段是消费者自己已经持有的信息，helm 不该替消费者做拼装缓存。
+
+**选择**：
+- 删除 `DonePayload` 结构体（`Text` + `TokenUsage`），在 `Event` 上新增 `Usage TokenUsage` 字段——`done` 事件中唯一有增量价值的是消耗统计
+- 新增 `EventStart`（goroutine 进入 ReAct 循环前发送一次）和 `EventDone`（`len(toolUses) == 0` 退出前发送），形成 `start → ... → done` 的生命周期括号
+- `TokenUsage` 当前暂不填充（sail adapter 的 SSE 解析尚未提取 OpenAI usage 字段），留零值占位
+
+**替代方案**：
+- 保留 `DonePayload` 仅删 `Text` — 嵌套结构无意义，一个字段不值得单独一个结构体
+- 不发 `EventStart` — 消费者无法区分"channel 刚打开还没数据"和"channel 打开后无事件"，没有 start 事件就缺少明确的就绪信号

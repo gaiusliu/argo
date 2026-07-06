@@ -1,128 +1,111 @@
-# Handoff — brig 代码审核与修复
+# Handoff — 全面代码审查与修复
 
 ## 背景
 
-对 004-brig-mvp 做了全面的 code-review，发现 15 个 bug。已修复大部分核心问题，但 `resolveVerdict` 仍存在设计缺陷待进一步讨论。
+对 argo 全量代码执行了 max-effort 级别的 code-review（9 角度并行审查 + 5 验证代理 + 1 扫查代理），发现 15 个问题。已修复 10 个代码问题、记录 1 个架构决策（DEC-028）、更新 4 份设计文档、1 个性能优化延后、2 个经讨论确认不需要改。
 
-## 已完成的修复（本会话）
+## 已完成的代码改动
 
 ### 正确性修复
 
-| 修复 | 涉及文件 | 说明 |
-|------|---------|------|
-| `matchPattern` 重写 | `brig/brig.go` | 从 3 条路径扩展为 6 条（精确/中间通配/前导通配/目录通配/后缀通配/反向前缀）。配合 `filepath.Base` 处理绝对路径 |
-| `extractPatterns` → `getRawParam` | `brig/brig.go` | 匹配时不再提炼碎片，直接取原始参数。零信息损失 |
-| `checkDeny` 新增 | `brig/brig.go` | Deny 规则用 raw 做第一层独立检查，不被 Ask/Allow 的"最后命中"覆盖 |
-| `GeneralizePattern` 新增 | `brig/brig.go` | 用户确认后概括 raw → 可复用 pattern，仅在 Append 时用 |
-| `Evaluate` 重写 | `brig/brig.go` | 流程：getRawParam → checkDeny → resolveVerdict |
-| `loop.go` Delta 事件收集 | `helm/loop.go` | 改为从 `EventToolUseDelta` 收集 ToolUse（含 Parameters），不再依赖 Start 事件 |
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| case 6 边界检查 | `brig/brig.go` | 新增 `isBoundary()` 辅助函数——match 后检查剩余文本首字符必须为边界（空/空格/tab/`/`/`\`），防止 `"rm"` 误匹配 `"rmdir"` |
+| case 4 守卫加强 | `brig/brig.go` | `len(pattern) > 1` → `len(pattern) > 2`，防止 `"/*"` 匹配所有绝对路径 |
 
-### sail adapter 流式修复
+### 可维护性改进
 
-| 修复 | 涉及文件 | 说明 |
-|------|---------|------|
-| `streamState` 重构 | `sail/adapter.go` | 三个 map 合并为 `map[int]toolCallState`，包含 id/name/args |
-| handleChunk | `sail/adapter.go` | 不再 streaming 期间发 Delta，改为静默累积 `function.arguments` 片段 |
-| flush 发完整 Delta | `sail/adapter.go` | `[DONE]` 触发 flush → 累积完成的完整 JSON → 发 `EventToolUseDelta` |
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| ToolCall 有键字面量 | `brig/brig.go` | `ToolCall{tu.Name, ...}` → `ToolCall{ToolName: ..., RawParam: ..., WorkingDir: ...}`，防止字段重排静默错位 |
+| getRawParam 解耦 adapter | `brig/brig.go` + `sail/adapter.go` | `flush()` 中将 JSON arguments 解析为扁平 map；`getRawParam` 删除嵌套 JSON 解析，brig 不再感知 sail 内部格式 |
+| buildOpenAIBody 填充 Tools | `sail/adapter.go` + `knot/types.go` + `deck/builtin_tool.go` | Tool 接口新增 `ParametersSchema()`，10 个内置工具各定义 JSON Schema，adapter 中转换为 `openAITool` 数组 |
+| fieldFromArgs 查表化 | `brig/brig.go` | switch-case → `toolParamKeys` map 查表，新增工具加一行映射即可 |
+| sensitiveFiles 去重 | `brig/deny.go` | 22 条重复规则 → `sensitiveFilePatterns` + `init()` 循环生成，新增 pattern 改一处 |
+| RuleSource 移除 | `brig/brig.go` + `brig/deny.go` | 删除 `RuleSource` 类型、`Static`/`Dynamic` 常量、`Rule.Source` 字段（动态审批已改用 `userApprovals` map） |
+| 排序依赖注释 | `brig/brig.go` + `brig/deny.go` | `loadStaticRules` 和 `resolveStaticRules` 明确声明 deny 必须排在首位 |
 
-### 基础设施
+### 关键代码变更快照
 
-| 改动 | 涉及文件 | 说明 |
-|------|---------|------|
-| 参数键常量 | `knot/types.go` | 13 个 `ParamXxx` 常量，deck/brig/sail 共用 |
-| 全仓字符串字面量替换 | `deck/*.go`, `brig/*.go`, `sail/*.go` | `params["cmd"]` → `params[knot.ParamCmd]` 等 |
-
-## ⚠️ 遗留问题：resolveVerdict 的设计缺陷
-
-### 问题描述
-
-当前 `resolveVerdict` 采用"最后命中者胜"：
-
+**Tool 接口**（`knot/types.go`）：
 ```go
-func resolveVerdict(rules []Rule, tool, raw string) (Verdict, string) {
-    var last *Rule
-    for i := range rules {
-        if matchPattern(raw, r.Pattern) { last = &rules[i] }
-    }
-    // ...
+type Tool interface {
+    Name() string
+    Description() string
+    Source() ToolSource
+    ParametersSchema() map[string]any  // 新增：JSON Schema，供 sail 构造 tools 字段
+    Execute(ctx context.Context, params map[string]any) (ToolResult, error)
 }
 ```
 
-同一 raw 可能命中多条规则，且它们可能 verdict 不一致。例如：
-
+**Rule 结构**（`brig/brig.go`）——已移除 Source 字段：
+```go
+type Rule struct {
+    Tool    string
+    Pattern string
+    Action  Verdict
+}
 ```
-dangerCommands: {bash, "rm", Ask}
-动态规则:       {bash, "rm -rf*", Allow}   ← 用户之前确认过
+
+**toolParamKeys 表**（`brig/brig.go`）：
+```go
+var toolParamKeys = map[string]string{
+    "bash": ParamCmd, "write": ParamPath, "edit": ParamPath,
+    "read": ParamPath, "grep": ParamPath, "web_fetch": ParamURL,
+}
 ```
 
-raw = `"rm -rf /tmp/test"` 同时命中两条。"最后命中"依赖隐式的规则顺序——动态规则排在末尾，Allow 覆盖掉 Ask。
+**isBoundary**（`brig/brig.go`）：
+```go
+func isBoundary(rest string) bool {
+    return rest == "" || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '/' || rest[0] == '\\'
+}
+```
 
-**但这不可靠**：如果未来动态规则被插入到中间，或者两条冲突的静态规则都命中（如 `safeCommands` 的 Allow 和 `dangerCommands` 的 Ask），`resolveVerdict` 的行为完全取决于遍历顺序，没有语义保证。
-
-### 已完成的调研
-
-查阅了三个参考项目的做法：
-
-- **opencode/kilocode**：`findLast`（最后命中者胜）+ 分层检查。Deny 在第一层独立检查（不可覆盖），Ask/Allow 在第二层走 `findLast`。没有 specificity 算法。正确性靠规则顺序保证：agent rule → user saved rule，后追加的覆盖之前的。
-- **Claude Code (pi)**：没有规则引擎，危险命令检测用硬编码正则。不存在 rule conflict 问题。
-
-argo 当前的 `checkDeny` + `resolveVerdict` 分层结构已经和 opencode 一致，但 `resolveVerdict` 内部的"靠顺序"没有文档化、没有保证。
-
-### 需要决策的方向
-
-两个候选方案：
-
-1. **Append 时去重**：追加动态 Allow 规则前，扫描已有规则，删除被新 pattern 覆盖的旧 Ask 规则。保证 resolveVerdict 时同一 raw 至多命中一条非 Deny 规则。逻辑简单，改动小。
-
-2. **规则加 Priority 字段**：给每条规则一个显式优先级（Deny=100, Ask=50, Allow=0），动态规则的 Priority 高于静态。resolveVerdict 取最高优先级的命中。语义明确，不依赖顺序。
-
-### 建议下一步
-
-先讨论选方案一还是方案二，然后实现，并补充 resolveVerdict 的单元测试覆盖冲突场景。
-
-## 已记录的文档
+## 已记录/更新的文档
 
 | 文件 | 操作 |
 |------|------|
-| `docs/iterations/005-brig-fix/main.md` | 新建——code-review 15 个 bug 的四根因分析 |
-| `docs/insights.md` | 追加——DeepSeek SSE 流式 tool call 格式实测发现（逐字增量、首块结构、多 tool call 同 chunk） |
+| `docs/modules/brig/design.md` | 全面更新：Rule 去 Source、matchPattern 加 isBoundary、新增 toolParamKeys/sensitiveFilePatterns 节、精简冗余代码块（212→144 行） |
+| `docs/modules/knot/design.md` | Tool 接口新增 ParametersSchema 方法说明 |
+| `docs/modules/deck/design.md` | builtinTool 新增 paramsSchema 字段、内置工具表加参数列 |
+| `docs/modules/sail/design.md` | 新增 buildOpenAIBody 概念条目、flush 更新为 JSON 解析 + 扁平 Parameters |
+| `docs/decisions.md` | DEC-028：WorkingDir 暂放 Config，待 Session 模块建立后迁移 |
 
-## 后续工作
+## 经讨论确认不需要改
 
-### P0 — resolveVerdict 修复
+| 原问题 | 原因 |
+|--------|------|
+| `cfg, _ := GetConfig()` 忽略错误 + sync.Once 缓存错误 | 执行流中 `sail.Chat` 先于 brig 调用 `GetConfig()` 并检查错误，brig 执行时 globalCfg 已保证非 nil |
+| parseSSE ctx 取消时双发 error | 概率小，后发的可覆盖先发的 |
+| TokenLimit 死代码 | 为后续模块准备的桩代码 |
+| case 6 中 `filepath.Base` 存在的必要性 | 已确认：让文件名 pattern（如 `.env`）能匹配深层路径（如 `/a/b/.env.local`） |
 
-选定方案 → 实现 → 单元测试。
+## 延后事项
 
-### P1 — 独立修复
+| 事项 | 优先级 | 说明 |
+|------|--------|------|
+| 静态规则按工具分桶（`map[string][]Rule`） | P2 | 当前 ~100 条规则扁平遍历，按工具分桶可降 90% 遍历量 |
+| CLI 工具删除 | P2 | 用户计划用 bash 替代 CLI 工具，届时 `cli_tool.go`、`tool_registry.go`、`SourceCLI`、`CLIToolEntry`、`DeckConfig.CLI` 一并清理 |
+| WorkingDir 从 Config 迁到 Session | P3 | DEC-028 已记录，待 Session 模块建立后执行 |
 
-| 任务 | 涉及文件 | 说明 |
-|------|---------|------|
-| SSRF deny 规则扩展 | `brig/deny.go` | 加 IPv6 `[::1]`、RFC 1918 私有段 `10.*`/`172.16-31.*`/`192.168.*` |
-| `go fmt` 归类修正 | `brig/deny.go` | 从 safeCommands 移到 dangerCommands（go fmt 会修改文件） |
-| Restore 去重 | `brig/brig.go` | 追加前检查已有规则，防止动态规则膨胀 |
-| sensitiveFiles + denyRules 去重 | `brig/deny.go` | 提取公共 pattern 列表，read/grep 和 write/edit 分别循环生成 |
-
-### P2 — 启用模板
-
-| 任务 | 说明 |
-|------|------|
-| `cmd/run/main.go` | CLI 入口创建，集成 brig Engine + ConfirmFunc |
-| 端到端测试 | 实际调 DeepSeek API 验证完整链路（sail → loop → brig → deck） |
-
-## 当前进度总览
+## 当前模块状态
 
 | 模块 | 状态 |
 |------|------|
 | deck | ✅ |
-| sail | ✅（adapter 流式累积已修） |
-| helm | ✅（Delta 事件收集已修） |
-| brig | 🚧（核心门控已修，resolveVerdict 待修） |
+| sail | ✅ |
+| helm | ✅ |
+| brig | ✅ |
+| knot | ✅ |
 | reef | 🚧 |
 | vault | ❌ |
 | crew | ❌ |
 | cmd | 🚧 |
+| session | ❌（新建后处理 WorkingDir 迁移 + Snapshot/Restore 实现） |
 
 ## 建议 skills
 
-- 直接继续对话即可，无需特定 skill
-- 如需代码生成规范，参考 CLAUDE.md 中的"写代码之前"和"写代码时"规则
+- 继续开发时参考 `docs/modules/*/design.md` 了解最新设计
+- 技术决策记录在 `docs/decisions.md`，DEC-028 与本轮改动相关
+- 如需代码生成规范，参考 CLAUDE.md 中的规则

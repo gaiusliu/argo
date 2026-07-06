@@ -20,7 +20,14 @@
       "Glob(c:\\Users\\Gaiusliu\\Desktop\\code\\kilocode\\*)",
       "Grep(*c:\\Users\\Gaiusliu\\Desktop\\code\\pi\\*)",
       "Grep(*c:\\Users\\Gaiusliu\\Desktop\\code\\opencode\\*)",
-      "Grep(*c:\\Users\\Gaiusliu\\Desktop\\code\\kilocode\\*)"
+      "Grep(*c:\\Users\\Gaiusliu\\Desktop\\code\\kilocode\\*)",
+      "Skill(two-axis-review)",
+      "Skill(two-axis-review:*)",
+      "Bash(echo \"---EXIT:$?---\")",
+      "Bash(powershell -Command \"\\(Get-ItemProperty -Path 'HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\AppModelUnlock' -Name 'AllowDevelopmentWithoutDevLicense' -ErrorAction SilentlyContinue\\).AllowDevelopmentWithoutDevLicense\")",
+      "Edit(/.claude/skills/two-axis-review/**)",
+      "Bash(go build *)",
+      "Bash(go vet *)"
     ]
   }
 }

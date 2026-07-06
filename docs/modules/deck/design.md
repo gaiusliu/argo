@@ -11,7 +11,7 @@ deck 是 Argo 的工具管理模块。负责工具的注册、发现和调用，
 | Tool | 工具的统一抽象，所有工具实现名称、描述、来源、执行 |
 | ToolResult | 工具调用结果，包含输出内容、成功/失败状态、调试信息 |
 | ToolSource | 工具来源：builtin（内置）或 cli（外部命令行） |
-| builtinTool | 内置工具，执行逻辑为 Go 函数 |
+| builtinTool | 内置工具，包含 name/description/paramsSchema 和执行逻辑（Go 函数）——`paramsSchema` 是 JSON Schema，供 sail adapter 构造 LLM function calling 的 tools 字段 |
 | cliTool | 外部 CLI 工具，用户自行安装的二进制，通过子进程执行 |
 | Agentic Search | LLM 调用 List / Lookup 自行发现和选择工具 |
 
@@ -103,15 +103,17 @@ ToolResult 返回
 
 ## 内置工具集
 
-| 工具 | 职责 |
-|---|---|
-| `bash` | 执行 Shell 命令，兜底覆盖所有操作 |
-| `read` | 流式读取文件内容，带行号返回，支持 offset/limit 翻页 |
-| `write` | 创建或覆盖写入文件 |
-| `edit` | 精确替换文件中的指定片段，支持 replace_all |
-| `grep` | 按正则搜索文件内容，返回 "文件:行号:内容" 格式 |
-| `glob` | 按文件名模式匹配文件，返回路径列表 |
-| `list` | 列出注册表中全部工具的名称和描述 |
-| `lookup` | 按名称查找工具，返回详细元数据 |
-| `webfetch` | 获取指定 URL 的内容，转换为 Markdown 文本返回 |
-| `websearch` | 执行网络搜索，返回结果列表（标题 + URL + 摘要） |
+每个内置工具在注册时携带参数 JSON Schema（`paramsSchema`），通过 `prop()` 和 `toolSchema()` 两个辅助函数构造——`prop` 生成单个 property 描述，`toolSchema` 组装完整 JSON Schema（含 `type: "object"`、`properties`、`required`）。
+
+| 工具 | 职责 | 参数 |
+|---|---|---|
+| `bash` | 执行 Shell 命令，兜底覆盖所有操作 | `cmd` (必填) |
+| `read` | 流式读取文件内容，带行号返回，支持 offset/limit 翻页 | `path` (必填), `offset`, `limit` |
+| `write` | 创建或覆盖写入文件 | `path`, `content` (均必填) |
+| `edit` | 精确替换文件中的指定片段，支持 replace_all | `path`, `old_string`, `new_string` (均必填), `replace_all` |
+| `grep` | 按正则搜索文件内容，返回 "文件:行号:内容" 格式 | `pattern`, `path` (均必填), `limit` |
+| `glob` | 按文件名模式匹配文件，返回路径列表 | `pattern`, `path` (均必填), `limit` |
+| `list` | 列出注册表中全部工具的名称和描述 | 无 |
+| `lookup` | 按名称查找工具，返回详细元数据 | `name` (必填) |
+| `web_fetch` | 获取指定 URL 的内容，返回纯文本 | `url` (必填) |
+| `web_search` | 执行网络搜索，返回结果列表 | `query` (必填) |
