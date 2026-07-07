@@ -38,6 +38,6 @@
 
 本地 `c:\Users\Gaiusliu\Desktop\code\` 下的三个 AI coding agent 项目，均已建立 CodeGraph 代码图谱（`.codegraph/`），可通过 `projectPath` 参数跨项目查询：
 
-- **pi**（`code/pi/`）—— Anthropic 官方 AI coding agent（TypeScript），核心逻辑在 `packages/coding-agent/src/core/`
+- **pi**（`code/pi/`）—— AI coding agent（TypeScript），核心逻辑在 `packages/coding-agent/src/core/`
 - **kilocode**（`code/kilocode/`）—— VS Code 插件 AI coding agent（TypeScript + Effect），核心逻辑在 `packages/core/src/`
 - **opencode**（`code/opencode/`）—— SST 开源的 AI coding agent（TypeScript monorepo），核心逻辑在 `packages/core/src/`

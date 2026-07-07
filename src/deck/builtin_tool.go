@@ -18,6 +18,9 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+
+	md "github.com/JohannesKaufmann/html-to-markdown"
+	doublestar "github.com/bmatcuk/doublestar/v4"
 	"time"
 
 	"argo/src/knot"
@@ -446,10 +449,8 @@ func globHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 		limit = v
 	}
 
-	// 提前校验 pattern 语法（Go 1.26）：filepath.Match 只会在 pattern 非法时
-	// 报 ErrBadPattern，合法 pattern 对所有文件名都不会 err。提前校验后 Walk
-	// 内即可忽略 Match 的 error。若未来 Go 版本放宽或变更此行为，需重新评估。
-	if _, err := filepath.Match(pattern, ""); err != nil {
+	// 提前校验 doublestar pattern（支持 ** 递归匹配）
+	if _, err := doublestar.Match(pattern, "x"); err != nil {
 		return knot.ToolResult{Status: knot.StatusError, Output: "glob failed: " + err.Error()}, fmt.Errorf("glob failed: %w", err)
 	}
 
@@ -485,8 +486,18 @@ func globHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 			return filepath.SkipAll
 		}
 
-		// pattern 已在 Walk 前校验，此处不会再 err
-		match, _ := filepath.Match(pattern, info.Name())
+		// 用相对路径 + doublestar 匹配（支持 ** 递归匹配）
+		rel, err := filepath.Rel(path, p)
+		if err != nil {
+			slog.Error("glob: rel 失败", "path", path, "p", p, "error", err)
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		match, err := doublestar.Match(pattern, rel)
+		if err != nil {
+			slog.Error("glob: match 失败", "pattern", pattern, "rel", rel, "error", err)
+			return nil
+		}
 		if !match {
 			return nil
 		}
@@ -539,16 +550,21 @@ func lookupHandler(ctx context.Context, params map[string]any) (knot.ToolResult,
 	return knot.ToolResult{Status: knot.StatusSuccess, Output: out}, nil
 }
 
-// stripHTML 去除 HTML 标签及 script/style 块，返回纯文本
+// stripHTML 将 HTML 转换为 Markdown，保留段落、标题、列表等语义结构
 func stripHTML(s string) string {
-	// 去掉 script 和 style 块（含内容）
-	reBlock := regexp.MustCompile(`(?is)<(script|style|noscript|iframe|object|embed)[^>]*>.*?</\1>`)
-	s = reBlock.ReplaceAllString(s, "")
-	// 去掉所有 HTML 标签
-	s = regexp.MustCompile(`<[^>]*>`).ReplaceAllString(s, " ")
-	// 合并连续空白
-	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
-	return strings.TrimSpace(s)
+	conv := md.NewConverter("", true, nil)
+	// 移除不可见内容块
+	conv.Remove("script")
+	conv.Remove("style")
+	conv.Remove("noscript")
+	conv.Remove("iframe")
+	conv.Remove("object")
+	conv.Remove("embed")
+	markdown, err := conv.ConvertString(s)
+	if err != nil {
+		return s
+	}
+	return strings.TrimSpace(markdown)
 }
 
 // webFetchHandler 获取 URL 内容并返回纯文本

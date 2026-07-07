@@ -3,6 +3,7 @@ package knot
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -167,6 +168,7 @@ var toolParamKeys = map[string]string{
 	"grep":      ParamPath,
 	"web_fetch": ParamURL,
 	"web_search": ParamQuery,
+	"glob":       ParamPattern,
 }
 
 // GetRawParam 从工具参数中取原始输入字符串。
@@ -175,6 +177,10 @@ func GetRawParam(tu ToolUse) string {
 		if val, _ := tu.Parameters[key].(string); val != "" {
 			return val
 		}
+		// 调试：key 存在但值为空，打印 Parameters 全量内容
+		slog.Error("GetRawParam: key found but value empty", "tool", tu.Name, "key", key, "params", tu.Parameters)
+	} else {
+		slog.Error("GetRawParam: tool not in toolParamKeys", "tool", tu.Name, "keys", toolParamKeys)
 	}
 	// adapter flush() JSON 解析失败时的降级
 	if raw, ok := tu.Parameters[ParamArgs].(string); ok {

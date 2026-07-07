@@ -1,119 +1,92 @@
-# Handoff — wake 日志模块 + CLI REPL + 集成联调
+# Handoff — Bug 修复 + 输入区改造 + vault 模块启动
 
-## 背景
+## 上回会话（wake + CLI REPL + 集成联调）
 
-本会话完成了三件事：新建 wake 日志模块、新建 CLI REPL、端到端集成联调（DeepSeek V4 Pro），修复了若干协议兼容和 UI 竞争问题。
+详见 git log `8efcdb7`。本次会话在其基础上做了以下工作。
 
-## 本次新增
+## 本次修复 / 新增
 
-### wake 日志模块（`src/wake/writer.go`）
+### stripHTML 正则 panic → html-to-markdown（`src/deck/builtin_tool.go`）
 
-自定义 `LogWriter`（实现 `io.Writer`），按日期+大小自动轮转，零外部依赖。喂给 `slog.TextHandler`，各模块直用 `slog.Info/Debug/Error`。
+Go `regexp` 使用 RE2 引擎，不支持反向引用 `\1`。原来 `(?is)<(script|style|...)[^>]*>.*?</\1>` 在 `regexp.MustCompile` 时直接 panic。
 
-- 文件命名：`wake-2006-01-02.log`，同日超额切 `.001`、`.002`…
-- 轮转策略：跨天优先，同日超过 MaxSize 追加序号
-- 启动时扫描续接当日文件、清理过期日志
+**修复**：引入 `github.com/JohannesKaufmann/html-to-markdown`，11 行替换旧的 stripHTML + isSkipTag（DEC-032，废弃 DEC-014）。
 
-### CLI REPL（`src/cli/main.go`）
+### globHandler 不支持 `**` → doublestar（`src/deck/builtin_tool.go`）
 
-交互式 TUI，`argo>` 提示符等待输入，支持多行（`\` 续行）、`/exit` 退出。事件循环串行消费 13 种事件类型，文本/思考/工具状态实时展示。
+`filepath.Match` 不支持 `**` 递归匹配，且只匹配 basename。LLM 发送 `**/hello.go` 永远返回 `no files found`。
 
-辅助函数：
-- `confirmTool` — 独立函数，通过 stdin 询问用户确认
-- `parseLevel` — 配置字符串 → slog.Level
+**修复**：引入 `github.com/bmatcuk/doublestar/v4`，改用 `filepath.Rel` 构造相对路径 + `doublestar.Match`（DEC-033）。`GetRawParam` 加防御型调试日志（slog.Error），同时 `toolParamKeys` 补了 `"glob": ParamPattern`。
 
-### CLI 辅助函数（`askCLI`、`parseLevel`、`confirmTool`）
+### write/edit askUser 时展示彩色 diff 预览（`src/cli/main.go`）
 
-`askCLI` 已改为返回 `knot.AskResult`（非 `bool`），对接 EventAsk 机制。
+`askCLI` 对 write/edit 工具增加变更预览——读取目标文件当前内容，模拟替换，用 `github.com/sergi/go-diff/diffmatchpatch` 生成行级 diff，删除行红色、新增行绿色输出到 stderr。`showDiff` 函数 42 行。
 
-## 关键架构改动
+### 用户输入区域背景色（`src/cli/main.go`）
 
-### EventAsk 事件驱动（替代 AskUser 回调）
+放弃分割线方案（续行时固定位置的下边框错位），改用 ANSI 背景色标记输入区域：
+- `\033[48;5;60m`（灰蓝 #5f5f87）→ `\033[49m`（复位）
+- 每次 `argo> ` 和续行 `  → ` 前设置背景色，输入结束复位
+- `\033[K` 清除行尾以填充全宽背景色
+- 回车后 `%s\n` 复位背景色，避免下一行残留
 
-`knot/types.go` 新增 `EventAsk` 事件类型 + `AskResult`（`AskAllowed`/`AskDenied`）。`RunLoop` 签名从 `(ctx, state, ask, eng)` 简化为 `(ctx, state, eng)`。helm 发 `EventAsk` 后阻塞等 `AskReply` channel，cli 消费者串行处理确保 UI 不交错。
+### 文档 / 配置修正
 
-### Message 扩展 tool_call 关联
+- `docs/decisions.md`：新增 DEC-032（html-to-markdown）+ DEC-033（doublestar），DEC-014 标记废弃
+- `handoff.md`：session 模块去掉，归入 vault；crew 明确为 Skill 库
+- `CLAUDE.md`：修正 pi 描述（删除"Anthropic 官方"）
 
-`knot/types.go` 新增 `ToolCallDetail` 类型，`Message` 加 `ToolCallID`（role=tool 用）和 `ToolCalls`（role=assistant 用）。`sail/adapter.go` 的 `openAIMsg` 对应加了 `tool_call_id` 和 `tool_calls` JSON 字段。满足 DeepSeek 严格 OpenAI 协议要求。
+## go.mod 新增依赖
 
-### getRawParam 迁移到 knot
-
-从 `brig/brig.go` 搬到 `knot/types.go`，导出为 `GetRawParam`。cli 可直接引用，不再依赖 brig。
-
-### SSE Content-Type 解析
-
-`deck/builtin_tool.go` — `callSearchMCP` 按 `Content-Type: text/event-stream` 剥 SSE 壳（`\n\n` 切事件 → 扫 `data:` 行拼接），其余 Content-Type 直解 JSON。
-
-### base_url 不做路径拼接
-
-用户从官方文档 copy-paste 完整端点 URL，`adapter.go` 不做任何拼接。
-
-## 配置
-
-`~/.argo/config.json` 当前配置 DeepSeek V4 Pro：
-
-```json
-{
-  "sail": {
-    "model": "deepseek-v4-pro",
-    "provider": {
-      "deepseek": {
-        "env": ["DEEPSEEK_API_KEY"],
-        "options": { "base_url": "https://api.deepseek.com/v1/chat/completions" },
-        "models": { "deepseek-v4-pro": { "name": "deepseek-v4-pro" } }
-      }
-    }
-  },
-  "log": { "level": "debug", "maxSize": 100, "maxAge": 7 }
-}
-```
+| 依赖 | 用途 |
+|------|------|
+| `github.com/JohannesKaufmann/html-to-markdown` | HTML→Markdown（DEC-032） |
+| `github.com/bmatcuk/doublestar/v4` | glob `**` 匹配（DEC-033） |
+| `github.com/sergi/go-diff/diffmatchpatch` | write/edit diff 预览 |
 
 ## 当前模块状态
 
 | 模块 | 状态 |
 |------|------|
-| wake | ✅ 新增 |
-| cli | ✅ 新增 |
-| deck | ✅（SSE 解析修复） |
-| sail | ✅（tool_calls 序列化） |
-| helm | ✅（EventAsk、RunLoop 去参数） |
-| brig | ✅（getRawParam 迁移、formatReason 精简） |
-| knot | ✅（ToolCallDetail、AskResult、GetRawParam 等） |
+| wake | ✅ |
+| cli | ✅（加了 diff 预览 + 背景色输入区） |
+| deck | ✅（stripHTML 修复、glob doublestar 修复） |
+| sail | ✅ |
+| helm | ✅ |
+| brig | ✅ |
+| knot | ✅（toolParamKeys 补 glob 条目、GetRawParam 调试日志） |
 | reef | 🚧 |
-| vault | ❌ |
-| crew | ❌ |
-| session | ❌ |
+| vault | ❌ → 下一会话重点（含 session 管理） |
+| crew | ❌（Skill 库管理） |
 
-## 文档
+## 下一步：vault 模块设计与开发
 
-| 文件 | 操作 |
-|------|------|
-| `docs/decisions.md` | 追加 DEC-030（自研 LogWriter）、DEC-031（EventAsk 事件驱动） |
-| `docs/modules/helm/design.md` | 全面更新：RunLoop 签名、EventAsk、tool_calls 协议、ToolUseDelta 时序 |
-| `docs/iterations/006-wake-mvp/main.md` | 新增迭代文档，含后续优化方向 |
-| `docs/handoff.md` | 已删除（过时的 sail MVP 手交文档） |
+### 前置条件（已就绪）
 
-## 已知问题 / 下一步
+- **Memory 协议**：[`docs/what.md`](docs/what.md) 第 78-84 行定义了 `Store`/`Retrieve` 接口和 `MemoryEntry` 结构
+- **MemoryEntry 类型**：[`src/helm/types.go`](src/helm/types.go) 第 38-41 行已有基础定义
+- **目录工具**：`helm.ArgoDir()`（`~/.argo/`）和 `helm.ProjectDir()`（`<root>/.argo/`）已实现
+- **TurnState**：[`src/helm/types.go`](src/helm/types.go) 第 25-30 行，当前在 cli/main.go 的堆栈上，需要持久化
+- **Config**：`~/.argo/config.json` 已有配置加载链路（`knot.LoadConfig`）
 
-用户判断接下来的重点是 **debug CLI 和工具调用的潜在问题**：
+### vault 需要实现
 
-1. **web_search 端点稳定性** — Parallel / Exa 两个免费 MCP 端点可能不稳定或返回异常格式。SSE 解析的边界情况待验证（多事件、空 data、非 JSON data）。
-2. **ToolUse 展示逻辑** — `seenTools` map 去重机制目前按 `toolUse.ID` 去重，需验证跨 RunLoop 调用时是否正确清理（当前在 `EventDone` 和 `EventError` 时 `clear`）。
-3. **多工具并行调用** — 已验证会出现两条 🔧 的情况（LLM 一次回复多个 tool_call），当前行为正确但未充分测试。
-4. **askCLI 被拒绝后的状态** — tool message 注入 `Status=Error`，LLM 能否正确恢复需验证。
-5. **续行符边缘情况** — `\\` 转义、空续行、续行中 EOF 等场景未充分测试。
-6. **日志文件轮转** — wake 模块的轮转逻辑尚未经过长期运行验证。
+1. **存储引擎选型**—SQLite vs JSON 文件。建议 SQLite（单文件、零配置、Go 标准库 `database/sql` + `modernc.org/sqlite` 纯 Go 驱动）
+2. **Session 管理**—创建/恢复会话。会话 ID 生成、TurnState.Messages 序列化/反序列化、会话元数据（创建时间、模型名、turn 计数）
+3. **Transcript 写入**—每轮对话结束后追加消息到当前会话
+4. **Memory 存取**—`Store(key, value, metadata)` + `Retrieve(query, limit)` → `[]MemoryEntry`
+5. **helm 集成点**—`RunLoop` 开始前加载记忆，每轮结束后写入 transcript
 
-## 建议 skills
+### 建议技能
 
-- 继续调试时参考 `docs/modules/*/design.md` 了解各模块最新设计
-- 新增决策记录到 `docs/decisions.md`（下一个 DEC-032）
-- 迭代文档 `docs/iterations/006-wake-mvp/main.md` 可在 wake 模块闭环时更新
+- 设计阶段参考 `docs/modules/*/design.md` 了解模块设计文档格式
+- 新增决策记录到 `docs/decisions.md`（下一个 DEC-034）
+- 新建迭代文档 `docs/iterations/007-vault-mvp/main.md`
 
-## 编译与运行
+### 编译与运行
 
 ```bash
-cd <project_root>
+cd c:/Users/Gaiusliu/Desktop/code/argo
 go build -o argo.exe ./src/cli/
 ./argo.exe
 ```

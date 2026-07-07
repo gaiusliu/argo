@@ -168,7 +168,7 @@
 
 ## DEC-014：WebFetch MVP 阶段固定输出纯文本，不做 HTML→Markdown 转换
 
-**状态**：✅ 现行
+**状态**：❌ 已废弃（替代者 [DEC-032](#dec-032webfetch-改用-html-to-markdown-库转换))
 
 **日期**：2026-07-03
 
@@ -453,3 +453,38 @@ Argo 当前尚无 Session 模块，且 `WorkingDir` 需要作为 `ToolCall` 指�
 **替代方案**：
 - `sync.Mutex` 锁 stderr — 只能防输出交错，不能防时序问题（🔧 在确认前打印）
 - 保持回调但移到消费者 — 需要双向 channel，实现复杂度更高
+
+## DEC-032：WebFetch 改用 html-to-markdown 库转换
+
+**状态**：✅ 现行
+
+**日期**：2026-07-07
+
+**决策**：`stripHTML` 从正则实现改为 `github.com/JohannesKaufmann/html-to-markdown` 库，HTML→Markdown 输出。
+
+**背景**：DEC-014 选择 MVP 阶段用正则去标签输出纯文本。但由于 Go `regexp` 包使用 RE2 引擎，先前 `stripHTML` 使用反向引用 `\1` 匹配成对标签（`<(script|style).*?</\1>`），触发 `regexp.Compile` panic。修复时两个选项：
+
+- **手写 tokenizer**：用 `golang.org/x/net/html` tokenizer 逐 token 遍历，深度计数跳过 `<script>` 等块。写出来后代码量 35 行，且仍需维护块级/行内标签映射。
+- **引入 html-to-markdown 库**：最流行的 Go HTML→Markdown 库，基于 `goquery` 构建，覆盖所有常见标签映射，可拔插规则。11 行代码替换。
+
+**选择**：引入 `html-to-markdown`——代码量从 35 行降到 11 行，且输出 Markdown 比纯文本对 LLM 更友好（保留段落、标题、列表、链接等语义）。该库在 DEC-014 中已列为候选，现在条件成熟。
+
+**替代方案**：手写 tokenizer → 被否决（代码量多、维护成本高、输出仍是纯文本）。
+
+## DEC-033：Glob 改用 doublestar 库支持 `**` 递归匹配
+
+**状态**：✅ 现行
+
+**日期**：2026-07-07
+
+**决策**：`globHandler` 从 `filepath.Match`（仅匹配 basename）改为 `github.com/bmatcuk/doublestar/v4`（匹配相对路径 + 支持 `**` 递归）。
+
+**背景**：LLM 调用 glob 工具时，常用 `**/*.go`、`**/hello.go` 等带 `**` 的 pattern。Go 标准库 `filepath.Match` 有两个缺陷：(1) 不支持 `**` 递归匹配；(2) 只匹配 `info.Name()`（basename），带路径分隔符的 pattern 永远无法命中。导致 LLM 频繁收到 `no files found`。
+
+三个参考项目（pi/kilocode/opencode）均委托外部二进制（`fd` 或 `rg`）做 glob。但 argo 尚未安装 `fd`，引入二进制需要下载逻辑、平台适配、降级方案。
+
+**选择**：引入 `doublestar`——纯 Go 库，`**` 匹配 + 路径支持，改动 3 行（校验 + Walk 内匹配 + 相对路径构造）。性能差距可忽略（Walk 的磁盘 IO 是瓶颈，doublestar 的 CPU 开销 ~5-20ms）。后续如遇大仓库性能瓶颈，加 `fd` 作为可选加速器。
+
+**替代方案**：
+- 修复 `filepath.Match` 参数使其匹配相对路径 → 仍不支持 `**`，治标不治本
+- 引入 `fd` 二进制 → 用户未安装，需额外安装/下载逻辑，过度工程
