@@ -39,14 +39,17 @@ type ToolCall struct {
 type Engine struct {
 	staticRules   []Rule
 	userApprovals map[ToolCall]struct{}
+	workingDir    string
 	mu            sync.Mutex
 }
 
 // NewEngine 创建引擎并加载静态规则副本。
-func NewEngine() *Engine {
+// workingDir 作为 ToolCall 指纹的一部分参与审批匹配。
+func NewEngine(workingDir string) *Engine {
 	return &Engine{
 		staticRules:   loadStaticRules(),
 		userApprovals: make(map[ToolCall]struct{}),
+		workingDir:    workingDir,
 	}
 }
 
@@ -101,8 +104,7 @@ func formatReason(tc ToolCall, suffix string) string {
 // Evaluate 对工具调用做门控判定，返回裁决和原因描述。
 // 流程：静态规则匹配（Deny > Allow > Ask）→ 已审批检查。
 func (e *Engine) Evaluate(tu knot.ToolUse) (Verdict, string) {
-	cfg, _ := knot.GetConfig()
-	tc := ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: cfg.WorkingDir}
+	tc := ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: e.workingDir}
 	verdict, reason := resolveStaticRules(e.staticRules, tc)
 	slog.Debug("门控判定", "tool", tu.Name, "result", verdict, "reason", reason)
 	switch verdict {
@@ -128,8 +130,7 @@ func (e *Engine) Evaluate(tu knot.ToolUse) (Verdict, string) {
 func (e *Engine) Approve(tu knot.ToolUse) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	cfg, _ := knot.GetConfig()
-	e.userApprovals[ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: cfg.WorkingDir}] = struct{}{}
+	e.userApprovals[ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: e.workingDir}] = struct{}{}
 }
 
 // Snapshot 返回所有动态规则的快照，供持久化使用。

@@ -25,10 +25,15 @@ const (
 )
 
 func main() {
-	// 1. 加载全局配置（slog 尚未初始化，错误直接输出到 stderr）
+	// 1. 加载全局配置和运行时上下文
 	cfg, err := knot.LoadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "加载配置失败: %v\n", err)
+		os.Exit(1)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "获取工作目录失败: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -55,10 +60,10 @@ func main() {
 		slog.Error("注册工具失败", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("启动完成", "tools", len(deck.List()), "workingDir", cfg.WorkingDir)
+	slog.Info("启动完成", "tools", len(deck.List()), "workingDir", cwd)
 
 	// 4. 创建 brig 规则引擎（加载静态规则）
-	eng := brig.NewEngine()
+	eng := brig.NewEngine(cwd)
 
 	// 5. 构造会话状态（Messages 随每轮对话累积）
 	modelName := cfg.Sail.Model

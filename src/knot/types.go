@@ -50,8 +50,8 @@ type Message struct {
 	// Role 取值为 MessageRoleSystem | MessageRoleUser | MessageRoleAssistant | MessageRoleTool
 	Role       MessageRole
 	Content    string
-	ToolCallID string            // role=tool 时必填，关联对应的 assistant tool_call
-	ToolCalls  []ToolCallDetail  // role=assistant 时，记录本轮发起的工具调用
+	ToolCallID string           // role=tool 时必填，关联对应的 assistant tool_call
+	ToolCalls  []ToolCallDetail // role=assistant 时，记录本轮发起的工具调用
 }
 
 // ChatRequest LLM 调用请求
@@ -161,12 +161,12 @@ const (
 // toolParamKeys 工具名 → 门控使用的参数字段名。
 // 新增工具时在此追加一行即可。
 var toolParamKeys = map[string]string{
-	"bash":      ParamCmd,
-	"write":     ParamPath,
-	"edit":      ParamPath,
-	"read":      ParamPath,
-	"grep":      ParamPath,
-	"web_fetch": ParamURL,
+	"bash":       ParamCmd,
+	"write":      ParamPath,
+	"edit":       ParamPath,
+	"read":       ParamPath,
+	"grep":       ParamPath,
+	"web_fetch":  ParamURL,
 	"web_search": ParamQuery,
 	"glob":       ParamPattern,
 }
@@ -211,10 +211,9 @@ type LogConfig struct {
 
 // Config 全局配置，聚合各模块配置
 type Config struct {
-	WorkingDir string     `json:"-"` // 启动时 os.Getwd()，不序列化
-	Deck       DeckConfig `json:"deck"`
-	Sail       SailConfig `json:"sail"`
-	Log        LogConfig  `json:"log"`
+	Deck DeckConfig `json:"deck"`
+	Sail SailConfig `json:"sail"`
+	Log  LogConfig  `json:"log"`
 }
 
 // DeckConfig deck 模块配置

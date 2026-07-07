@@ -10,11 +10,11 @@ import (
 
 // APIError 分类后的 API 错误，helm 据此决定重试或通知用户
 type APIError struct {
-	StatusCode         int
-	Code               string // auth / quota / rate_limit / server_error / context_overflow / network
-	Retryable          bool
-	RetryAfterSeconds  int
-	Message            string
+	StatusCode        int
+	Code              string // auth / quota / rate_limit / server_error / context_overflow / network
+	Retryable         bool
+	RetryAfterSeconds int
+	Message           string
 }
 
 func (e *APIError) Error() string {

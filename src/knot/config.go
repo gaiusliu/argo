@@ -13,13 +13,6 @@ func LoadConfig() (*Config, error) {
 	// 1. 默认骨架
 	cfg := GenerateDefaultConfig()
 
-	// 启动时获取工作目录，失败报错
-	if wd, err := os.Getwd(); err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
-	} else {
-		cfg.WorkingDir = wd
-	}
-
 	// 2. 读用户配置
 	path, err := ConfigPath()
 	if err != nil {

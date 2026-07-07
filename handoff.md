@@ -1,89 +1,80 @@
-# Handoff — Bug 修复 + 输入区改造 + vault 模块启动
+# Handoff — vault 接入 RunLoop + CLI
 
-## 上回会话（wake + CLI REPL + 集成联调）
+## 上回会话成果
 
-详见 git log `8efcdb7`。本次会话在其基础上做了以下工作。
+vault 模块 MVP 代码完成，8/10 会话内容见 git log `(当前未提交)`。
 
-## 本次修复 / 新增
+### CWD 重构（DEC-028 收尾）
 
-### stripHTML 正则 panic → html-to-markdown（`src/deck/builtin_tool.go`）
+`WorkingDir` 从 `knot.Config` 移除，改为 `brig.NewEngine(workingDir)` 构造函数注入。CWD 由 cli 入口捕获。
 
-Go `regexp` 使用 RE2 引擎，不支持反向引用 `\1`。原来 `(?is)<(script|style|...)[^>]*>.*?</\1>` 在 `regexp.MustCompile` 时直接 panic。
+改动文件：[src/knot/types.go](src/knot/types.go)、[src/knot/config.go](src/knot/config.go)、[src/brig/brig.go](src/brig/brig.go)、[src/cli/main.go](src/cli/main.go)
 
-**修复**：引入 `github.com/JohannesKaufmann/html-to-markdown`，11 行替换旧的 stripHTML + isSkipTag（DEC-032，废弃 DEC-014）。
+### vault 模块 MVP（`src/vault/`）
 
-### globHandler 不支持 `**` → doublestar（`src/deck/builtin_tool.go`）
-
-`filepath.Match` 不支持 `**` 递归匹配，且只匹配 basename。LLM 发送 `**/hello.go` 永远返回 `no files found`。
-
-**修复**：引入 `github.com/bmatcuk/doublestar/v4`，改用 `filepath.Rel` 构造相对路径 + `doublestar.Match`（DEC-033）。`GetRawParam` 加防御型调试日志（slog.Error），同时 `toolParamKeys` 补了 `"glob": ParamPattern`。
-
-### write/edit askUser 时展示彩色 diff 预览（`src/cli/main.go`）
-
-`askCLI` 对 write/edit 工具增加变更预览——读取目标文件当前内容，模拟替换，用 `github.com/sergi/go-diff/diffmatchpatch` 生成行级 diff，删除行红色、新增行绿色输出到 stderr。`showDiff` 函数 42 行。
-
-### 用户输入区域背景色（`src/cli/main.go`）
-
-放弃分割线方案（续行时固定位置的下边框错位），改用 ANSI 背景色标记输入区域：
-- `\033[48;5;60m`（灰蓝 #5f5f87）→ `\033[49m`（复位）
-- 每次 `argo> ` 和续行 `  → ` 前设置背景色，输入结束复位
-- `\033[K` 清除行尾以填充全宽背景色
-- 回车后 `%s\n` 复位背景色，避免下一行残留
-
-### 文档 / 配置修正
-
-- `docs/decisions.md`：新增 DEC-032（html-to-markdown）+ DEC-033（doublestar），DEC-014 标记废弃
-- `handoff.md`：session 模块去掉，归入 vault；crew 明确为 Skill 库
-- `CLAUDE.md`：修正 pi 描述（删除"Anthropic 官方"）
-
-## go.mod 新增依赖
-
-| 依赖 | 用途 |
+| 文件 | 内容 |
 |------|------|
-| `github.com/JohannesKaufmann/html-to-markdown` | HTML→Markdown（DEC-032） |
-| `github.com/bmatcuk/doublestar/v4` | glob `**` 匹配（DEC-033） |
-| `github.com/sergi/go-diff/diffmatchpatch` | write/edit diff 预览 |
+| [vault.go](src/vault/vault.go) | `Vault` 接口（6 方法）+ `SessionInfo` + `SessionTokens` |
+| [record.go](src/vault/record.go) | `Record`（user/llm/tool）+ `ToolVerdict`（5 态）+ `ToolCallRecord` |
+| [file_vault.go](src/vault/file_vault.go) | `FileVault` 实现全部 6 方法（CreateSession、ListSessions、GetSession、DeleteSession、Append、Load） |
+| [flock.go](src/vault/flock.go) | `LockDir`/`UnlockDir`（mkdir 目录锁 + 指数退避，DEC-034） |
 
-## 当前模块状态
+### 设计决策
+
+- **Record 类型精简**：MVP 只做 user/llm/tool，system/compact/profile 推迟
+- **ToolVerdict 5 态追踪**：Argo 独有审计需求，三个参考项目无此能力
+- **AGENTS.md 不经过 vault**：`helm.buildSystemPrompt` 直接读，与 pi/opencode/kilocode 一致
+- **PROFILE.md 推迟**：Read/Write 暂不暴露，留待 deck 工具
+- **目录锁**：`os.Mkdir` 方案（对标 opencode Flock），零外部依赖
+- **Session 惰性创建**：CLI 启动不立即创建，首条消息时 `CreateSession()`
+
+### 文档
+
+- [docs/modules/vault/design.md](docs/modules/vault/design.md) — 模块设计（基于实际代码）
+- [docs/modules/vault/transcript.md](docs/modules/vault/transcript.md) — Record 字段规格（与代码一致）
+- [docs/decisions.md](docs/decisions.md) — DEC-034（mkdir 目录锁）
+- [docs/iterations/007-vault-mvp/main.md](docs/iterations/007-vault-mvp/main.md) — 迭代文档
+
+## 当前状态
+
+```
+src/vault/
+├── vault.go          ← Vault 接口（6 方法）+ SessionInfo/SessionTokens
+├── record.go         ← Record/RecordType/ToolVerdict/ToolCallRecord
+├── file_vault.go     ← FileVault 完整实现
+└── flock.go          ← LockDir/UnlockDir
+```
+
+vault 包独立可编译，零外部依赖。尚未接入任何模块。
+
+## 下一步：vault 接入 RunLoop + CLI
+
+### 涉及文件
+
+- **`src/cli/main.go`** — 创建 FileVault 实例，注入 helm，集成会话生命周期
+- **`src/helm/loop.go`** — RunLoop 每轮结束后调用 vault.Append()
+- **`src/helm/types.go`** — TurnState 加 SessionID 字段
+- 可能需要新增 **Message → Record 转换**的辅助代码（放在 vault 包或新文件）
+
+### 接入要点
+
+1. **CLI 启动时**：创建 `fileVault := vault.NewFileVault(helm.ArgoDir())`，展示最近会话列表（`fileVault.ListSessions()`），默认新会话状态
+2. **首条用户消息时**：`vault.CreateSession(cwd)` → 获取 sessionID，存入 `TurnState.SessionID`
+3. **RunLoop 每轮结束后**：将本轮新增的 `[]knot.Message` 转换为 `[]vault.Record`，调用 `vault.Append(sessionID, records)`。写入失败记日志不阻塞
+4. **Message → Record 转换**：用户消息 → user record；LLM 回复 → llm record（含 model、tool_calls）；工具结果 → tool record（含 verdict、tool_call_id、status）
+5. **brig verdict 传递**：RunLoop 中 Evaluate 返回的 verdict 需要填入 tool record。当前 brig 返回 `(Verdict, string)`，调用方已持有判决结果
+6. **TurnState.SessionID**：[src/helm/types.go:25](src/helm/types.go#L25) 加字段
+
+### 相关模块状态
 
 | 模块 | 状态 |
 |------|------|
-| wake | ✅ |
-| cli | ✅（加了 diff 预览 + 背景色输入区） |
-| deck | ✅（stripHTML 修复、glob doublestar 修复） |
-| sail | ✅ |
-| helm | ✅ |
-| brig | ✅ |
-| knot | ✅（toolParamKeys 补 glob 条目、GetRawParam 调试日志） |
-| reef | 🚧 |
-| vault | ❌ → 下一会话重点（含 session 管理） |
-| crew | ❌（Skill 库管理） |
+| vault | ✅ MVP 代码完成，待集成 |
+| helm | 🚧 待加 vault 写入点 |
+| cli | 🚧 待加 vault 初始化 + 会话列表 |
+| brig | ✅ 已有 ToolVerdict 对应的 brig.Verdict（Allow/Ask/Deny），需映射到 ToolVerdict 5 态 |
 
-## 下一步：vault 模块设计与开发
-
-### 前置条件（已就绪）
-
-- **Memory 协议**：[`docs/what.md`](docs/what.md) 第 78-84 行定义了 `Store`/`Retrieve` 接口和 `MemoryEntry` 结构
-- **MemoryEntry 类型**：[`src/helm/types.go`](src/helm/types.go) 第 38-41 行已有基础定义
-- **目录工具**：`helm.ArgoDir()`（`~/.argo/`）和 `helm.ProjectDir()`（`<root>/.argo/`）已实现
-- **TurnState**：[`src/helm/types.go`](src/helm/types.go) 第 25-30 行，当前在 cli/main.go 的堆栈上，需要持久化
-- **Config**：`~/.argo/config.json` 已有配置加载链路（`knot.LoadConfig`）
-
-### vault 需要实现
-
-1. **存储引擎选型**—SQLite vs JSON 文件。建议 SQLite（单文件、零配置、Go 标准库 `database/sql` + `modernc.org/sqlite` 纯 Go 驱动）
-2. **Session 管理**—创建/恢复会话。会话 ID 生成、TurnState.Messages 序列化/反序列化、会话元数据（创建时间、模型名、turn 计数）
-3. **Transcript 写入**—每轮对话结束后追加消息到当前会话
-4. **Memory 存取**—`Store(key, value, metadata)` + `Retrieve(query, limit)` → `[]MemoryEntry`
-5. **helm 集成点**—`RunLoop` 开始前加载记忆，每轮结束后写入 transcript
-
-### 建议技能
-
-- 设计阶段参考 `docs/modules/*/design.md` 了解模块设计文档格式
-- 新增决策记录到 `docs/decisions.md`（下一个 DEC-034）
-- 新建迭代文档 `docs/iterations/007-vault-mvp/main.md`
-
-### 编译与运行
+### 编译运行
 
 ```bash
 cd c:/Users/Gaiusliu/Desktop/code/argo

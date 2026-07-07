@@ -27,7 +27,12 @@
       "Bash(powershell -Command \"\\(Get-ItemProperty -Path 'HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\AppModelUnlock' -Name 'AllowDevelopmentWithoutDevLicense' -ErrorAction SilentlyContinue\\).AllowDevelopmentWithoutDevLicense\")",
       "Edit(/.claude/skills/two-axis-review/**)",
       "Bash(go build *)",
-      "Bash(go vet *)"
+      "Bash(go vet *)",
+      "WebSearch",
+      "Read(//tmp/**)",
+      "Read(//c/tmp/**)",
+      "Bash(grep '\"type\":\"system\"' ~/.claude/projects/c--Users-Gaiusliu-Desktop-code-argo/0cc8b6f6-5aa0-495d-9da4-c77758158e1b.jsonl | grep -o '\"subtype\":\"[^\"]*\"' | sort | uniq -c)",
+      "Read(//c/Users/Gaiusliu/.claude/projects/c--Users-Gaiusliu-Desktop-code-argo/**)"
     ]
   }
 }

@@ -51,10 +51,10 @@ type openAIToolCallFn struct {
 
 // openAIMsg 单条消息
 type openAIMsg struct {
-	Role       string            `json:"role"`
-	Content    string            `json:"content"`
-	ToolCallID string            `json:"tool_call_id,omitempty"`
-	ToolCalls  []openAIToolCall  `json:"tool_calls,omitempty"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
 }
 
 // buildOpenAIBody 将 knot.ChatRequest 转为 OpenAI JSON 请求体
@@ -62,17 +62,17 @@ func buildOpenAIBody(req knot.ChatRequest, modelName string) ([]byte, error) {
 	msgs := make([]openAIMsg, len(req.Messages))
 	for i, m := range req.Messages {
 		msg := openAIMsg{Role: string(m.Role), Content: m.Content, ToolCallID: m.ToolCallID}
-	if len(m.ToolCalls) > 0 {
-		tcs := make([]openAIToolCall, len(m.ToolCalls))
-		for j, tc := range m.ToolCalls {
-			tcs[j] = openAIToolCall{
-				ID: tc.ID, Type: "function",
-				Function: openAIToolCallFn{Name: tc.Name, Arguments: tc.Arguments},
+		if len(m.ToolCalls) > 0 {
+			tcs := make([]openAIToolCall, len(m.ToolCalls))
+			for j, tc := range m.ToolCalls {
+				tcs[j] = openAIToolCall{
+					ID: tc.ID, Type: "function",
+					Function: openAIToolCallFn{Name: tc.Name, Arguments: tc.Arguments},
+				}
 			}
+			msg.ToolCalls = tcs
 		}
-		msg.ToolCalls = tcs
-	}
-	msgs[i] = msg
+		msgs[i] = msg
 	}
 	// 转换 knot.Tool → openAITool
 	tools := make([]openAITool, 0, len(req.Tools))

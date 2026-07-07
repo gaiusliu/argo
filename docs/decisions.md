@@ -488,3 +488,25 @@ Argo 当前尚无 Session 模块，且 `WorkingDir` 需要作为 `ToolCall` 指�
 **替代方案**：
 - 修复 `filepath.Match` 参数使其匹配相对路径 → 仍不支持 `**`，治标不治本
 - 引入 `fd` 二进制 → 用户未安装，需额外安装/下载逻辑，过度工程
+
+## DEC-034：vault 使用 mkdir 目录锁保护共享文件
+
+**状态**：✅ 现行
+
+**日期**：2026-07-07
+
+**决策**：vault 的 FileVault 使用 `os.Mkdir` 目录锁方案保护 `profile.md` 等共享文件的并发写入，而非文件级 `flock` syscall 或 `sync.Mutex`。
+
+**背景**：profile.md 是跨会话共享的全局文件——LLM 工具调用 `vault.WriteProfile()` 可能与其他 goroutine 的 `vault.Recall()` 并发。需要一种并发保护机制。三个参考项目中，pi 使用 `proper-lockfile` npm 包（Linux 上底层 `flock`），opencode 使用自研 `Flock` 工具（纯 `mkdir` 方案）。两者都能跨进程工作。
+
+**选择**：采用 opencode 的目录锁方案——对目标文件路径创建 `{path}.lock` 目录，`os.Mkdir` 在所有操作系统上都是原子操作。目录存在 → 锁已被持有，`time.Sleep` + 指数退避（100ms 起，上限 1s）等待重试；目录创建成功 → 获取锁。释放时 `os.Remove` 删除目录。
+
+**理由**：
+- 零外部依赖——`os.Mkdir` + `os.Remove` + `time.Sleep`，全部标准库
+- 跨平台——Windows/Linux/macOS 全部原子，不需要 `flock_unix.go` / `flock_windows.go` 两份条件编译
+- `time.Sleep` 会让出 goroutine，不是自旋，不浪费 CPU
+- 对标 opencode 的生产实践——opencode 的 `Flock` 同样用 `mkdir` + sleep + 指数退避方案，额外加了 jitter + heartbeat + stale 检测 + breaker 清理竞态保护。MVP 阶段只做基础版本，后续按需补 heartbeat 和 stale 清理
+
+**替代方案**：
+- `syscall.Flock` — 需要两份平台文件，Windows 上 API 完全不同（`LockFileEx`），增加维护负担
+- `sync.Mutex` — 单进程够用但不跨进程，未来 Gateway mode 多实例场景需要文件锁
