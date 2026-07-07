@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"time"
 
 	"argo/src/brig"
 	"argo/src/deck"
@@ -38,13 +39,15 @@ func RunLoop(ctx context.Context, state *TurnState, eng *brig.Engine) (<-chan kn
 				state.Messages = msgs
 			}
 
-			// 2. LLM 调用，system 消息永远在最前
+			// 2. LLM 调用，system 消息永远在最前，独立超时
+			llmCtx, llmCancel := context.WithTimeout(ctx, 5*time.Minute)
 			req := knot.ChatRequest{
 				Messages: append([]knot.Message{sysMsg}, state.Messages...),
 				Tools:    tools,
 			}
 
-			sailEvents, err := sail.Chat(ctx, state.ModelName, req)
+			sailEvents, err := sail.Chat(llmCtx, state.ModelName, req)
+			llmCancel()
 			if err != nil {
 				out <- knot.Event{Type: knot.EventError, Err: err}
 				slog.Debug("RunLoop 结束", "reason", "sail.Chat 失败")
@@ -127,7 +130,9 @@ func RunLoop(ctx context.Context, state *TurnState, eng *brig.Engine) (<-chan kn
 						// 工具获批 → 此时才通知调用方展示工具信息
 						out <- knot.Event{Type: knot.EventToolUseDelta, ToolUse: *tu}
 						slog.Debug("工具开始执行", "tool", tu.Name, "params", tu.Parameters)
-						result, err := tool.Execute(ctx, tu.Parameters)
+						toolCtx, toolCancel := context.WithTimeout(ctx, 5*time.Minute)
+						result, err := tool.Execute(toolCtx, tu.Parameters)
+						toolCancel()
 						if err != nil {
 							slog.Error("工具执行失败", "tool", tu.Name, "error", err)
 							tu.Result = knot.ToolResult{

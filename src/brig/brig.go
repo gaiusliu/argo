@@ -86,8 +86,8 @@ func (e *Engine) approved(call ToolCall) bool {
 // scopeKey 将原始参数转为审批粒度键。web_fetch 按域名匹配，其余工具按精确参数匹配。
 func scopeKey(toolName, raw string) string {
 	if toolName == "web_fetch" && raw != "" {
-		if u, err := url.Parse(raw); err == nil && u.Host != "" {
-			return strings.ToLower(u.Host)
+		if u, err := url.Parse(raw); err == nil && u.Hostname() != "" {
+			return strings.ToLower(u.Hostname())
 		}
 	}
 	return raw

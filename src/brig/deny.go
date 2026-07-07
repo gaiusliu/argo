@@ -31,6 +31,7 @@ func loadStaticRules() []Rule {
 var denyRules = []Rule{
 	// 破坏性命令
 	{Action: Deny, Tool: "bash", Pattern: "rm -rf /"},
+	{Action: Deny, Tool: "bash", Pattern: "rm -rf /*"},
 	{Action: Deny, Tool: "bash", Pattern: "mkfs"},
 	{Action: Deny, Tool: "bash", Pattern: "dd if="},
 	{Action: Deny, Tool: "bash", Pattern: ":(){ :|:& };:"},

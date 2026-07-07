@@ -21,7 +21,6 @@ import (
 
 	md "github.com/JohannesKaufmann/html-to-markdown"
 	doublestar "github.com/bmatcuk/doublestar/v4"
-	"time"
 
 	"argo/src/knot"
 )
@@ -33,9 +32,9 @@ type builtinTool struct {
 	handler      func(ctx context.Context, params map[string]any) (knot.ToolResult, error)
 }
 
-func (bt *builtinTool) Name() string                 { return bt.name }
-func (bt *builtinTool) Description() string          { return bt.description }
-func (bt *builtinTool) Source() knot.ToolSource      { return knot.SourceBuiltin }
+func (bt *builtinTool) Name() string                     { return bt.name }
+func (bt *builtinTool) Description() string              { return bt.description }
+func (bt *builtinTool) Source() knot.ToolSource          { return knot.SourceBuiltin }
 func (bt *builtinTool) ParametersSchema() map[string]any { return bt.paramsSchema }
 func (bt *builtinTool) Execute(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	result, err := bt.handler(ctx, params)
@@ -135,7 +134,7 @@ var builtinTools = []*builtinTool{
 	{
 		name: "list", description: "Lists all registered tools with names and descriptions",
 		paramsSchema: toolSchema(nil, map[string]map[string]any{}),
-		handler: listHandler,
+		handler:      listHandler,
 	},
 	{
 		name: "lookup", description: "Gets detailed metadata for a tool by name",
@@ -162,12 +161,6 @@ var builtinTools = []*builtinTool{
 
 // webFetchMaxSize WebFetch 响应体上限（字节）
 const webFetchMaxSize = 5 * 1024 * 1024
-
-// webFetchTimeout WebFetch HTTP 请求超时
-const webFetchTimeout = 30 * time.Second
-
-// searchRPCTimeout WebSearch MCP 调用超时
-const searchRPCTimeout = 25 * time.Second
 
 var excludedDirs = []string{".git", "node_modules", ".argo"}
 
@@ -406,7 +399,6 @@ func grepHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 		if err != nil {
 			return nil // 跳过读不了的文件
 		}
-		defer file.Close()
 
 		scanner := bufio.NewScanner(file)
 		lineNum := 0
@@ -419,6 +411,7 @@ func grepHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 				found++
 			}
 		}
+		file.Close()
 		return nil
 	})
 
@@ -587,15 +580,14 @@ func webFetchHandler(ctx context.Context, params map[string]any) (knot.ToolResul
 			fmt.Errorf("web_fetch: %w", err)
 	}
 
-	// 发起 GET 请求，30s 超时
-	client := &http.Client{Timeout: webFetchTimeout}
+	// 发起 GET 请求，超时由 ctx 控制
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return knot.ToolResult{Status: knot.StatusError, Output: "web_fetch: " + err.Error()},
 			fmt.Errorf("web_fetch: %w", err)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return knot.ToolResult{Status: knot.StatusError, Output: "web_fetch: " + err.Error()},
 			fmt.Errorf("web_fetch: %w", err)
@@ -650,8 +642,7 @@ func callSearchMCP(ctx context.Context, baseURL, toolName string, args map[strin
 		return "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	// POST 请求，25s 超时
-	client := &http.Client{Timeout: searchRPCTimeout}
+	// POST 请求，超时由 ctx 控制
 	req, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
@@ -659,7 +650,7 @@ func callSearchMCP(ctx context.Context, baseURL, toolName string, args map[strin
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("post request: %w", err)
 	}

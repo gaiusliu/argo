@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"time"
 
 	"argo/src/brig"
 	"argo/src/deck"
@@ -136,7 +135,7 @@ func main() {
 		slog.Debug("用户输入", "content", prompt)
 
 		// 启动 RunLoop
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		ctx, cancel := context.WithCancel(context.Background())
 		events, err := helm.RunLoop(ctx, state, eng)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "❌ RunLoop 失败: %v\n", err)
