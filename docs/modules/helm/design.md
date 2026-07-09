@@ -2,143 +2,91 @@
 
 ## 概述
 
-helm 是 Argo 的 Agent 核心循环。它是一个无状态的自由函数 `RunLoop`，接收一次用户输入，驱动 "LLM 调用 → 工具执行 → 结果注入 → 循环" 的完整链路，返回最终回复。helm 不持有会话状态——消息历史、回合计数等由调用方（CLI / Gateway）维护并传入。brig 规则引擎由调用方注入，helm 在工具执行前调 brig 做权限门控。Ask 确认通过 `EventAsk` 事件与调用方交互。
+helm 是 Argo 的 Agent 核心循环。基于状态机模型驱动 "LLM 调用 → 工具执行 → 循环" 的 ReAct 链路。LoopState 仅持有控制流字段，对话历史由 Vault 管理。brig.Guard 在工具执行前做权限门控，EventAsk 通过 SSE 与调用方交互（DEC-031、DEC-035）。
 
 ## 核心概念
 
 | 概念 | 说明 |
-|---|---|
-| runLoop | 无状态自由函数，执行 ReAct 循环，返回 `<-chan Event` 供调用方流式消费 |
-| TurnState | 会话状态（消息历史、回合计数、当前模型名），由调用方持有并传入传出 |
-| Event | 流式事件，13 种类型（见下方"流式事件类型"） |
-| ReAct 循环 | 思考（LLM）→ 行动（工具执行）→ 观察（结果注入）的闭环，LLM 无 tool_calls 即退出 |
+|------|------|
+| LoopPhase | 状态机阶段枚举：PhaseLLM / PhaseExecuteTools / PhaseWaitAsk / PhaseDone |
+| LoopState | 控制流状态结构体，可 JSON 序列化持久化到 state.json（不含对话历史） |
+| Run | 状态机入口函数，串联 LLM ↔ ExecuteTools 直至暂停或结束 |
+| runPhaseLLM | LLM 调用 + SSE 消费 + 工具调用收集，完成后立刻 vault.Append |
+| runPhaseExecuteTools | 逐条 brig 门控 + 工具执行，每条结果立刻 vault.Append |
+| Vault | 对话历史唯一数据源（transcript.jsonl），Phase 间通过 `*[]Message` 指针共享 |
+
+## LoopState 字段
+
+| 字段 | 说明 |
+|------|------|
+| Phase | 当前阶段 |
+| TurnCount | 轮次计数 |
+| ModelName | 当前模型 |
+| ToolUses | 本轮 LLM 返回的全部工具调用（含执行结果） |
+| ToolUseIndex | 当前处理到的工具下标 |
+| AskReason | PhaseWaitAsk 时的确认原因 |
+| AskID | PhaseWaitAsk 时的 ask 标识 |
 
 ## 流程
 
-### 单轮主循环
+### Phase 流转
 
 ```
-调用方传入 state（含首次 user message）
+PhaseLLM
   │
-  └─ RunLoop(ctx, &state, eng)
-       │
-       ├─ 会话级缓存（循环前执行一次）
-       │    ├─ deck.List()               → 工具列表
-       │    └─ buildSystemPrompt()       → system prompt
-       │
-       ├─ for（无终止条件，LLM 自行决定退出）
-       │    │
-       │    ├─ 1. reef.Compact()              → 裁剪消息历史（失败降级）
-       │    ├─ 2. sail.Chat(state.ModelName)  → 流式 LLM 调用
-       │    │      ├─ start / textStart / textDelta / textDone  → 转发 + 累计
-       │    │      ├─ thinkingStart / thinkingDelta / thinkingDone → 转发 + 累计
-       │    │      └─ 收集 tool_use（不立即转发，等获批后再发）
-       │    │
-       │    ├─ 3. 无 tool_use？→ 注入纯文本 assistant message → 退出循环
-       │    │
-       │    ├─ 4. 有 tool_use → 注入带 tool_calls 的 assistant message
-       │    │      → deck.Lookup() → brig 门控 → Tool.Execute()
-       │    │      ├─ brig.Evaluate(tu) → Allow / Ask / Deny
-       │    │      ├─ Ask → EventAsk{AskReply} → 等调用方回传 → eng.Approve()
-       │    │      ├─ 获批 → EventToolUseDelta → Execute → EventToolUseDone
-       │    │      └─ 被拒 → EventToolUseDone（Status=Error）
-       │    │
-       │    └─ 5. 结果注入 state.Messages → 回到步骤 1
-       │
-       └─ 返回最终 state
+  ├─ 无工具调用 → PhaseDone
+  │
+  └─ 有工具调用 → PhaseExecuteTools
+                    │
+                    ├─ 全部完成 → PhaseLLM
+                    │
+                    └─ 遇 Ask → PhaseWaitAsk → goroutine 退出
+                                                 │
+                                         外部回复后 Run() 重入
+                                                 │
+                                          PhaseExecuteTools（从 ToolUseIndex 续）
 ```
 
-### system prompt 组装
+### Run() 签名
 
 ```
-buildSystemPrompt(tools)
-  ├─ 行为核心（常量）
-  ├─ 环境信息（Platform / 日期 / Global config）
-  ├─ 工具列表（deck 遍历）
-  └─ AGENTS.md（不存在跳过）
+Run(ctx, st *LoopState, session *voyage.Session, msgs *[]knot.Message, reply knot.AskResult)
 ```
 
-### 流式事件类型
+- `msgs` 为对话历史指针，goroutine 内 Phase 间共享
+- `reply` 为 EventAsk 回复，新消息时传入 `AskDefault`
+- 返回 `<-chan knot.Event` + SSE 事件流
 
-一次完整调用的事件序列：
+### 写入时机
 
-```
-纯文本回复：
-  start → textStart → textDelta → ... → textDone → done
+| 消息类型 | 写入点 |
+|---------|--------|
+| user | handlePrompt 入口立刻 Append |
+| assistant | runPhaseLLM 结束后立刻 Append |
+| tool | runPhaseExecuteTools 每条执行完立刻 Append |
+| ask 回复 | run.go PhaseWaitAsk 入口处理后立刻 Append |
 
-带思考（reasoning）：
-  start → thinkingStart → thinkingDelta → ... → thinkingDone
-        → textStart → textDelta → ... → textDone → done
+### goroutine 模型
 
-带工具调用：
-  start → thinkingDelta... → textDelta...
-        → （循环：ask? → EventAsk → EventToolUseDelta → EventToolUseDone）
-        → done
-```
-
-| 事件 | 携带数据 | 说明 |
-|---|---|---|
-| start | 无 | 开始生成 |
-| textStart | 无 | 文本块开始 |
-| textDelta | Delta string | 增量文本 |
-| textDone | 无 | 文本块结束 |
-| thinkingStart | 无 | 思考开始 |
-| thinkingDelta | Delta string | 增量思考 |
-| thinkingDone | 无 | 思考结束 |
-| toolUseStart | ToolUse | 工具调用开始 |
-| toolUseDelta | ToolUse | 工具调用（获批后发出，Result 待填） |
-| toolUseDone | ToolUse（Result 已填） | 工具执行完成 |
-| ask | ToolUse + AskReason + AskReply | 需用户确认，调用方通过 AskReply 回传结果 |
-| done | Usage TokenUsage | 全部完成，channel 关闭 |
-| error | Err error | 出错，channel 关闭 |
-
-text 和 thinking 共用 Event.Delta 字段，由 Type 区分。
+Run() 内部启动一个 goroutine，使用 `emit` 闭包向返回的 channel 发送事件。goroutine 在以下情况退出：
+- PhaseWaitAsk（存 LoopState 后退出，等外部回复）
+- PhaseDone（emit EventDone 后退出）
+- PhaseLLM 遇 sail.Chat 错误（emit EventError 后退出）
 
 ## 行为合约
 
-### 循环控制
+### 上下文裁剪
 
-- runLoop 是纯自由函数，不绑定方法，state 由调用方持有和传入
-- LLM 返回零个 tool_use 时退出循环，不做 maxTurns 硬停止
-- ctx 取消时立即返回 ctx.Err()
-
-### 上下文裁剪委托
-
-- 每轮 LLM 调用前，将消息历史交给 `reef.Compact()` 处理
-- helm 不感知裁剪策略（截断 / 摘要），reef 为 nil 则跳过
+- 每轮 PhaseLLM 调用前，将消息历史交给 `reef.Compact()` 处理
 - 裁剪失败不阻塞，降级使用原始消息
 
-### system prompt 组装
+### System prompt
 
-- helm 主动向各模块索取上下文片段（工具列表、Skill 指令、用户偏好），自行拼接
-- 会话级缓存：同一会话中 system prompt 和工具列表只构建一次，跨轮次复用
-
-### 流式输出
-
-- 通过 `<-chan Event` 推送事件，调用方统一消费（CLI 输出终端，Gateway 转发客户端）
-- ToolUseDelta 延后到工具获批后才发出——避免 UI 在用户确认前泄露工具调用信息
-- Ask 确认通过 `EventAsk` 事件驱动：helm 发事件并阻塞等调用方通过 `AskReply` channel 回传，消费者串行处理确保 UI 不交错
-- done 事件后 channel 关闭
+- helm 主动拼装：行为核心 + 环境信息 + 工具列表 + AGENTS.md
+- 每次 PhaseLLM 调用时重建（工具列表可能变化）
 
 ### 错误处理
 
-- sail.Chat 返回的错误直接透传给调用方，不做重试或分类恢复
-- 工具执行部分失败：失败的 ToolResult.Status="error"，成功的正常注入，LLM 自行决定是否重试
-
-### tool_calls 协议兼容
-
-- assistant message 有工具调用时携带 `tool_calls` 元数据（ID + Name + Arguments）
-- tool message 携带 `tool_call_id` 关联到对应的 assistant tool_call
-- 满足 DeepSeek 等严格遵循 OpenAI 协议的厂商要求
-
-## 消费接口
-
-| 模块 | 关键方法 |
-|---|---|
-| deck | `List()`, `Lookup(name)`, `Tool.Execute(ctx, params)` |
-| reef | `Compact(ctx, messages, tokenLimit)` |
-| sail | `Chat(ctx, modelName, req) → <-chan Event`, `Window(modelName)` |
-| brig | `Evaluate(tu) → (Verdict, reason)`, `Approve(tu)` |
-| knot | `GetRawParam(tu)` |
-| vault | （待建） |
-| crew | （待建） |
+- sail.Chat 错误：slog.Error + emit EventError → PhaseDone
+- 工具执行失败：tu.Result = error → vault.Append → 继续下一条
+- vault 写入失败：slog.Error，不阻塞流程

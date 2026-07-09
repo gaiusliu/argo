@@ -11,11 +11,16 @@ import (
 // Chat 发送 LLM 流式请求，返回事件 channel。
 // 查找模型所属 provider → 读 API Key → 路由 adapter → 透传事件流。
 func Chat(ctx context.Context, modelName string, req knot.ChatRequest) (<-chan knot.Event, error) {
-	// 查找模型所属的 provider 配置
 	cfg, err := knot.GetConfig()
 	if err != nil {
 		return nil, fmt.Errorf("sail: %w", err)
 	}
+
+	// 模型名为空时使用配置默认值
+	if modelName == "" {
+		modelName = cfg.Sail.Model
+	}
+
 	var pName string
 	var pCfg knot.ProviderConfig
 	for name, p := range cfg.Sail.Provider {

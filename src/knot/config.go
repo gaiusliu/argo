@@ -102,15 +102,6 @@ func writeConfig(path string, cfg *Config) error {
 	return nil
 }
 
-// DefaultModel 返回配置中的默认模型名，失败回退 "claude"
-func DefaultModel() string {
-	cfg, err := GetConfig()
-	if err != nil || cfg.Sail.Model == "" {
-		return "claude"
-	}
-	return cfg.Sail.Model
-}
-
 // 已知 provider 的环境变量映射
 var knownProviders = map[string]string{
 	"anthropic": "ANTHROPIC_API_KEY",

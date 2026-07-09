@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	md "github.com/JohannesKaufmann/html-to-markdown"
 	doublestar "github.com/bmatcuk/doublestar/v4"
@@ -40,6 +41,8 @@ func (bt *builtinTool) Execute(ctx context.Context, params map[string]any) (knot
 	result, err := bt.handler(ctx, params)
 	return postProcess(result), err
 }
+
+var BuiltinToolTimeout = 5 * time.Minute
 
 // prop 构造单个 JSON Schema property 定义
 func prop(typ, desc string) map[string]any {
@@ -181,6 +184,8 @@ func resolveShell() (string, string) {
 }
 
 func bashHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, BuiltinToolTimeout)
+	defer cancel()
 	cmdStr, ok := params[knot.ParamCmd].(string)
 	if !ok || cmdStr == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "empty command"}, fmt.Errorf("bash: empty command")
@@ -204,6 +209,8 @@ func bashHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 }
 
 func readHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, BuiltinToolTimeout)
+	defer cancel()
 	path, ok := params[knot.ParamPath].(string)
 	if !ok || path == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "path is required"}, fmt.Errorf("path is required")
@@ -259,6 +266,8 @@ func readHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 }
 
 func writeHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, BuiltinToolTimeout)
+	defer cancel()
 	// 提取参数
 	path, ok := params[knot.ParamPath].(string)
 	if !ok || path == "" {
@@ -284,6 +293,8 @@ func writeHandler(ctx context.Context, params map[string]any) (knot.ToolResult, 
 }
 
 func editHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, BuiltinToolTimeout)
+	defer cancel()
 	// 提取参数
 	path, ok := params[knot.ParamPath].(string)
 	if !ok || path == "" {
@@ -347,6 +358,8 @@ func editHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 }
 
 func grepHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, BuiltinToolTimeout)
+	defer cancel()
 	pattern, ok := params[knot.ParamPattern].(string)
 	if !ok || pattern == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "grep failed: pattern is required"}, fmt.Errorf("grep failed: pattern is required")
@@ -426,6 +439,8 @@ func grepHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 }
 
 func globHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, BuiltinToolTimeout)
+	defer cancel()
 	// 提取参数
 	path, ok := params[knot.ParamPath].(string)
 	if !ok || path == "" {
@@ -521,6 +536,8 @@ func isExcludedDir(name string) bool {
 
 // listHandler 返回注册表中全部工具的名称和描述
 func listHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, BuiltinToolTimeout)
+	defer cancel()
 	tools := List()
 	var buf strings.Builder
 	for _, t := range tools {
@@ -531,6 +548,8 @@ func listHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 
 // lookupHandler 按名称查找工具，返回详细元数据
 func lookupHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, BuiltinToolTimeout)
+	defer cancel()
 	name, ok := params[knot.ParamName].(string)
 	if !ok || name == "" {
 		return knot.ToolResult{Status: knot.StatusError, Output: "lookup: name is required"}, fmt.Errorf("lookup: name is required")
@@ -563,6 +582,8 @@ func stripHTML(s string) string {
 // webFetchHandler 获取 URL 内容并返回纯文本
 // 只允许 http/https 协议，响应上限 5MB，超时 30s
 func webFetchHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, BuiltinToolTimeout)
+	defer cancel()
 	// 提取并校验 url 参数
 	url, ok := params[knot.ParamURL].(string)
 	if !ok || url == "" {
@@ -697,6 +718,8 @@ func fnvHash(s string) uint32 {
 // webSearchHandler 通过网络搜索获取结果
 // 在 Parallel 和 Exa 两个免费 MCP 端点间随机选择一个
 func webSearchHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, BuiltinToolTimeout)
+	defer cancel()
 	// 提取并校验 query 参数
 	query, ok := params[knot.ParamQuery].(string)
 	if !ok || query == "" {

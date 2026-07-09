@@ -1,5 +1,5 @@
 // Package brig 实现工具调用的权限审批门控。
-// Engine 在 helm.RunLoop 执行工具前判定 Allow/Ask/Deny。
+// FileGuard 在 helm.RunLoop 执行工具前判定 Allow/Ask/Deny。
 package brig
 
 import (
@@ -21,11 +21,26 @@ const (
 	Deny                 // 直接拒绝
 )
 
+// Guard 工具调用鉴权接口。
+type Guard interface {
+	Evaluate(tu knot.ToolUse) (Verdict, string)
+	Approve(tu knot.ToolUse)
+	IsCachedApproval(tu knot.ToolUse) bool
+	Snapshot() []ApprovalEntry // 导出用户审批记录
+	Restore([]ApprovalEntry)   // 从快照恢复
+}
+
 // Rule 规则即记忆 — 既是求值依据，也是已审批记录
 type Rule struct {
 	Tool    string  // 工具名（bash / write / edit / web_fetch / read / grep）
 	Pattern string  // 匹配模式（命令、目录、域名、文件路径）
 	Action  Verdict // Allow / Ask / Deny
+}
+
+// ApprovalEntry 用户审批记录的持久化条目。
+type ApprovalEntry struct {
+	Tool    string `json:"tool"`
+	Pattern string `json:"pattern"`
 }
 
 type ToolCall struct {
@@ -34,19 +49,18 @@ type ToolCall struct {
 	WorkingDir string
 }
 
-// Engine 规则引擎，每个 session 持有一个实例。
-// 静态规则只读共享，动态规则由 mu 保护并发追加。
-type Engine struct {
+// FileGuard 基于静态规则 + 内存动态审批的 Guard 实现。
+type FileGuard struct {
 	staticRules   []Rule
 	userApprovals map[ToolCall]struct{}
 	workingDir    string
-	mu            sync.Mutex
+	mu            sync.RWMutex
 }
 
-// NewEngine 创建引擎并加载静态规则副本。
+// NewFileGuard 创建 FileGuard 并加载静态规则副本。
 // workingDir 作为 ToolCall 指纹的一部分参与审批匹配。
-func NewEngine(workingDir string) *Engine {
-	return &Engine{
+func NewFileGuard(workingDir string) *FileGuard {
+	return &FileGuard{
 		staticRules:   loadStaticRules(),
 		userApprovals: make(map[ToolCall]struct{}),
 		workingDir:    workingDir,
@@ -79,10 +93,10 @@ func resolveStaticRules(staticRules []Rule, tc ToolCall) (Verdict, string) {
 	return Ask, formatReason(tc, "permission required")
 }
 
-func (e *Engine) approved(call ToolCall) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	_, ok := e.userApprovals[call]
+func (fg *FileGuard) approved(call ToolCall) bool {
+	fg.mu.RLock()
+	defer fg.mu.RUnlock()
+	_, ok := fg.userApprovals[call]
 	return ok
 }
 
@@ -103,10 +117,10 @@ func formatReason(tc ToolCall, suffix string) string {
 
 // Evaluate 对工具调用做门控判定，返回裁决和原因描述。
 // 流程：静态规则匹配（Deny > Allow > Ask）→ 已审批检查。
-func (e *Engine) Evaluate(tu knot.ToolUse) (Verdict, string) {
-	tc := ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: e.workingDir}
-	verdict, reason := resolveStaticRules(e.staticRules, tc)
-	slog.Debug("门控判定", "tool", tu.Name, "result", verdict, "reason", reason)
+func (fg *FileGuard) Evaluate(tu knot.ToolUse) (Verdict, string) {
+	tc := ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: fg.workingDir}
+	verdict, reason := resolveStaticRules(fg.staticRules, tc)
+	slog.Info("门控判定", "tool", tu.Name, "verdict", verdict, "reason", reason)
 	switch verdict {
 	case Deny:
 		return Deny, reason
@@ -115,7 +129,7 @@ func (e *Engine) Evaluate(tu knot.ToolUse) (Verdict, string) {
 		return Allow, reason
 
 	case Ask:
-		if e.approved(tc) {
+		if fg.approved(tc) {
 			return Allow, formatReason(tc, "user approved")
 		}
 
@@ -127,20 +141,39 @@ func (e *Engine) Evaluate(tu knot.ToolUse) (Verdict, string) {
 }
 
 // Approve 追加一条动态规则（用户确认后调用）。
-func (e *Engine) Approve(tu knot.ToolUse) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.userApprovals[ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: e.workingDir}] = struct{}{}
+func (fg *FileGuard) Approve(tu knot.ToolUse) {
+	fg.mu.Lock()
+	defer fg.mu.Unlock()
+	fg.userApprovals[ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: fg.workingDir}] = struct{}{}
 }
 
-// Snapshot 返回所有动态规则的快照，供持久化使用。
-func (e *Engine) Snapshot() []Rule {
-	return nil
+// IsCachedApproval 检查工具调用是否命中用户已有审批记录。
+// 当 Evaluate 返回 Allow 时，调用方可借此区分 auto_allow 和 cached_allow。
+func (fg *FileGuard) IsCachedApproval(tu knot.ToolUse) bool {
+	tc := ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: fg.workingDir}
+	fg.mu.RLock()
+	defer fg.mu.RUnlock()
+	_, ok := fg.userApprovals[tc]
+	return ok
 }
 
-// Restore 从快照恢复动态规则到当前引擎。
-func (e *Engine) Restore(rules []Rule) {
+func (fg *FileGuard) Snapshot() []ApprovalEntry {
+	fg.mu.RLock()
+	defer fg.mu.RUnlock()
+	result := make([]ApprovalEntry, 0, len(fg.userApprovals))
+	for tc := range fg.userApprovals {
+		result = append(result, ApprovalEntry{Tool: tc.ToolName, Pattern: tc.RawParam})
+	}
+	return result
+}
 
+// Restore 从快照恢复用户审批记录。
+func (fg *FileGuard) Restore(entries []ApprovalEntry) {
+	fg.mu.Lock()
+	defer fg.mu.Unlock()
+	for _, entry := range entries {
+		fg.userApprovals[ToolCall{ToolName: entry.Tool, RawParam: entry.Pattern, WorkingDir: fg.workingDir}] = struct{}{}
+	}
 }
 
 // isBoundary 判断字符串是否为空或首字符为合法边界符（空格、路径分隔符）。

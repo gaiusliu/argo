@@ -2,6 +2,7 @@ package knot
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log/slog"
 	"os"
@@ -25,7 +26,9 @@ const (
 	EventToolUseDone   EventType = "toolUseDone"
 	EventDone          EventType = "done"
 	EventError         EventType = "error"
-	EventAsk           EventType = "ask" // 需用户确认，消费者处理后通过 Reply 回传结果
+	EventAsk           EventType = "ask"          // 需用户确认，消费者通过 Reply（进程内）或 AskID（HTTP）回传结果
+	EventMessageStart  EventType = "messageStart" // 一条消息开始
+	EventMessageEnd    EventType = "messageEnd"   // 一条消息结束
 )
 
 // MessageRole 消息角色类型
@@ -76,21 +79,27 @@ type TokenUsage struct {
 type AskResult int
 
 const (
-	AskDenied  AskResult = iota // 用户拒绝
-	AskAllowed                  // 本次允许
+	AskDefault AskResult = iota
+	AskDenied            // 用户拒绝
+	AskAllowed           // 本次允许
 )
 
-// Event 流式事件，通过 channel 推送给调用方
+// Event 流式事件，通过 channel 推送给调用方。
 type Event struct {
-	// Type 标识事件类型，取值为各 Event* 常量
-	Type    EventType
-	Delta   string // textDelta 或 thinkingDelta，由 Type 区分
+	// Type 事件类型，取值为各 Event* 常量。
+	Type EventType
+	// Delta textDelta 或 thinkingDelta 的增量文本，由 Type 区分。
+	Delta string
+	// ToolUse 工具调用详情，EventToolUseStart / EventToolUseDone / EventAsk 时携带。
 	ToolUse ToolUse
-	Usage   TokenUsage // EventDone 时携带的消耗统计
-	Err     error
-	// EventAsk 专用
+	// Usage EventDone 时携带的 token 消耗统计。
+	Usage TokenUsage
+	// Err 错误信息，EventError 时携带。
+	Err error
+	// AskReason EventAsk 时需要用户确认的原因描述。
 	AskReason string
-	AskReply  chan AskResult
+	// AskID EventAsk 的唯一标识，server 模式下用于 HTTP 回执配对。
+	AskID string
 }
 
 // ToolUse 工具调用，Result.Status == StatusDefault 表示待执行
@@ -169,6 +178,13 @@ var toolParamKeys = map[string]string{
 	"web_fetch":  ParamURL,
 	"web_search": ParamQuery,
 	"glob":       ParamPattern,
+}
+
+// NewAskID 生成 EventAsk 的唯一标识。
+func NewAskID() string {
+	b := make([]byte, 4)
+	rand.Read(b)
+	return fmt.Sprintf("ask_%x", b)
 }
 
 // GetRawParam 从工具参数中取原始输入字符串。

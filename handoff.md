@@ -1,83 +1,171 @@
-# Handoff — vault 接入 RunLoop + CLI
+# Handoff — 状态机重构 + Server 模块 + Guard 接口化
 
-## 上回会话成果
+## 本次会话成果
 
-vault 模块 MVP 代码完成，8/10 会话内容见 git log `(当前未提交)`。
+### 1. helm 状态机（核心重构）
 
-### CWD 重构（DEC-028 收尾）
+RunLoop 从 "goroutine + channel 阻塞等待 Ask" 改为纯状态机模型。
 
-`WorkingDir` 从 `knot.Config` 移除，改为 `brig.NewEngine(workingDir)` 构造函数注入。CWD 由 cli 入口捕获。
-
-改动文件：[src/knot/types.go](src/knot/types.go)、[src/knot/config.go](src/knot/config.go)、[src/brig/brig.go](src/brig/brig.go)、[src/cli/main.go](src/cli/main.go)
-
-### vault 模块 MVP（`src/vault/`）
+**文件：**
 
 | 文件 | 内容 |
 |------|------|
-| [vault.go](src/vault/vault.go) | `Vault` 接口（6 方法）+ `SessionInfo` + `SessionTokens` |
-| [record.go](src/vault/record.go) | `Record`（user/llm/tool）+ `ToolVerdict`（5 态）+ `ToolCallRecord` |
-| [file_vault.go](src/vault/file_vault.go) | `FileVault` 实现全部 6 方法（CreateSession、ListSessions、GetSession、DeleteSession、Append、Load） |
-| [flock.go](src/vault/flock.go) | `LockDir`/`UnlockDir`（mkdir 目录锁 + 指数退避，DEC-034） |
+| [src/helm/state_machine.go](src/helm/state_machine.go) | `LoopPhase` 枚举 + `LoopState` 结构体 + `NewPromptState` / `NewReplyState` 构造函数 |
+| [src/helm/phase_llm.go](src/helm/phase_llm.go) | `runPhaseLLM(ctx, st, emit)` — LLM 调用 + SSE 流式消费 |
+| [src/helm/phase_execute_tools.go](src/helm/phase_execute_tools.go) | `runPhaseExecuteTools(ctx, st, session, emit) bool` — 门控 + 工具执行 + vault 写入 |
+| [src/helm/run.go](src/helm/run.go) | `Run(ctx, st, session)` — 状态机入口，串联 Phas		eLLM ↔ PhaseExecuteTools |
 
-### 设计决策
+`LoopState` 可 JSON 序列化，`PhaseWaitAsk` 时存磁盘，回复后加载继续。
 
-- **Record 类型精简**：MVP 只做 user/llm/tool，system/compact/profile 推迟
-- **ToolVerdict 5 态追踪**：Argo 独有审计需求，三个参考项目无此能力
-- **AGENTS.md 不经过 vault**：`helm.buildSystemPrompt` 直接读，与 pi/opencode/kilocode 一致
-- **PROFILE.md 推迟**：Read/Write 暂不暴露，留待 deck 工具
-- **目录锁**：`os.Mkdir` 方案（对标 opencode Flock），零外部依赖
-- **Session 惰性创建**：CLI 启动不立即创建，首条消息时 `CreateSession()`
-
-### 文档
-
-- [docs/modules/vault/design.md](docs/modules/vault/design.md) — 模块设计（基于实际代码）
-- [docs/modules/vault/transcript.md](docs/modules/vault/transcript.md) — Record 字段规格（与代码一致）
-- [docs/decisions.md](docs/decisions.md) — DEC-034（mkdir 目录锁）
-- [docs/iterations/007-vault-mvp/main.md](docs/iterations/007-vault-mvp/main.md) — 迭代文档
-
-## 当前状态
-
+**Phase 流转：**
 ```
-src/vault/
-├── vault.go          ← Vault 接口（6 方法）+ SessionInfo/SessionTokens
-├── record.go         ← Record/RecordType/ToolVerdict/ToolCallRecord
-├── file_vault.go     ← FileVault 完整实现
-└── flock.go          ← LockDir/UnlockDir
+PhaseLLM → (无工具) PhaseDone
+         → (有工具) PhaseExecuteTools
+                       → (全部完成) PhaseLLM
+                       → (遇 Ask) PhaseWaitAsk → 外部回复 → PhaseExecuteTools
 ```
 
-vault 包独立可编译，零外部依赖。尚未接入任何模块。
+### 2. brig 模块 — Guard 接口化
 
-## 下一步：vault 接入 RunLoop + CLI
+- `Engine` → `FileGuard`，新增 `Guard` interface
+- `Session.Engine` → `Session.Guard`，类型从 `*brig.FileGuard` 改为 `brig.Guard`
+- `Guard` 接口新增 `Snapshot() []ApprovalEntry` / `Restore([]ApprovalEntry)`
+- 审批记录持久化到 `approvals.json`，`ResumeSession` 时自动恢复
+
+**文件：** [src/brig/brig.go](src/brig/brig.go)
+
+### 3. voyage 模块 — 接口优化
+
+- `Resume(baseDir, id)` — 去掉 `cwd` 参数，内部读 `session.json` 取 `WorkingDir`
+- `Delete` / `Rename` → `DeleteSession(baseDir, id)` / `RenameSession(baseDir, id, name)` 独立函数
+- `Session` 嵌入 `SessionInfo`，`session.ID` 等字段自动提升
+- `Append` 直接更新嵌入的 `SessionInfo`，不再从磁盘重读
+- `SaveApprovals(session)` 持久化审批记录
+
+**文件：** [src/voyage/voyage.go](src/voyage/voyage.go)
+
+### 4. server 模块 — 无状态 HTTP 后端
+
+Server 完全无状态——去掉 `sessions map`、`mu`、`pendingAsks` channel map。
+
+**路由（全部 POST + JSON body，除 list 为 GET）：**
+```
+POST /session/create   → voyage.CreateSession → 返回 sessionID
+POST /session/resume   → voyage.ResumeSession → 返回 session 元数据
+POST /session/prompt   → helm.Run(NewPromptState) → SSE 流
+POST /session/delete   → voyage.DeleteSession
+POST /ask/reply        → helm.Run(NewReplyState) → SSE 流
+GET  /session/list     → voyage.ListSessions
+```
+
+**文件：**
+
+| 文件 | 内容 |
+|------|------|
+| [src/server/server.go](src/server/server.go) | `Server` 结构体 + chi 路由 + CRUD handlers |
+| [src/server/prompt.go](src/server/prompt.go) | `handlePrompt` + `handleAskReply` + `streamAndSave` |
+| [src/server/sse.go](src/server/sse.go) | `writeSSE` — Event → JSON → SSE 格式 |
+| [src/server/event_json.go](src/server/event_json.go) | `eventJSON` — `knot.Event` 的 JSON 序列化层（排除 channel/error 字段） |
+| [src/server/state.go](src/server/state.go) | `saveLoopState` / `loadLoopState` 磁盘存取 |
+| [src/server/types.go](src/server/types.go) | 请求体 + 响应体 + `sessionJSON` JSON 视图类型 |
+
+### 5. knot.Event 清理
+
+- 删除了 `Event.AskReply chan AskResult`，server 模式下无 channel 桥接
+- 注释格式优化：所有行尾注释改为上方独立行
+- `eventJSON` 在 server 包提供序列化层
+
+### 6. sail 适配器 — 超时机制修正
+
+- `ChatDefaultTimeout` 导出到包级别
+- 超时逻辑从 `doChat` 提升到 `runPhaseLLM` 层——`llmCtx` 覆盖 LLM 调用 + SSE 消费全程，`defer cancel` 在 `for range` 消费完 events 后才触发
+
+**文件：** [src/sail/adapter.go](src/sail/adapter.go), [src/sail/sail.go](src/sail/sail.go)
+
+### 7. vault 模块 — 错误处理规范
+
+- `readRecords` 只返回原始错误，文件不存在的判断上移到 `Load()` 层
+- 与 `loadApprovals` / `ResumeSession` 保持一致的错误处理模式
+
+### 8. 编译产物
+
+- `argo-server.exe` — 项目根目录，可直接运行。监听 `:4090`
+
+## 当前模块依赖
+
+```
+knot (共享类型，叶子)
+  ↑
+vault (纯存储 Append/Load)
+  ↑
+brig (Guard 接口 + FileGuard 实现)
+  ↑
+sail (LLM 适配层)
+  ↑
+helm (LoopState 状态机 + Run 入口)
+  ↑
+voyage (Session 聚合 Vault + Guard)
+  ↑
+server (无状态 HTTP 路由)
+  ↑
+argo-server/main.go (二进制入口)
+```
+
+## 遗留状态
+
+- **CLI (`src/cli/main.go`)** 仍在用旧的 `helm.RunLoop` 接口（含 `onPause` 参数），传 `nil` 会在运行时 panic。已临时注释掉 `ev.AskReply <- result` 行（`AskReply` 字段已从 `knot.Event` 删除）
+- 旧 `loop.go` / `checkpoint.go` 文件仍存在，CLI 迁完后可删除
+
+## 下一步：CLI 改为 HTTP 客户端
+
+目标：CLI 不再直接调用 helm/voyage/brig，改为通过 HTTP + SSE 与 argo-server 通信。
 
 ### 涉及文件
 
-- **`src/cli/main.go`** — 创建 FileVault 实例，注入 helm，集成会话生命周期
-- **`src/helm/loop.go`** — RunLoop 每轮结束后调用 vault.Append()
-- **`src/helm/types.go`** — TurnState 加 SessionID 字段
-- 可能需要新增 **Message → Record 转换**的辅助代码（放在 vault 包或新文件）
+- **`src/cli/main.go`** — 大幅改写
 
-### 接入要点
+### CLI 流程
 
-1. **CLI 启动时**：创建 `fileVault := vault.NewFileVault(helm.ArgoDir())`，展示最近会话列表（`fileVault.ListSessions()`），默认新会话状态
-2. **首条用户消息时**：`vault.CreateSession(cwd)` → 获取 sessionID，存入 `TurnState.SessionID`
-3. **RunLoop 每轮结束后**：将本轮新增的 `[]knot.Message` 转换为 `[]vault.Record`，调用 `vault.Append(sessionID, records)`。写入失败记日志不阻塞
-4. **Message → Record 转换**：用户消息 → user record；LLM 回复 → llm record（含 model、tool_calls）；工具结果 → tool record（含 verdict、tool_call_id、status）
-5. **brig verdict 传递**：RunLoop 中 Evaluate 返回的 verdict 需要填入 tool record。当前 brig 返回 `(Verdict, string)`，调用方已持有判决结果
-6. **TurnState.SessionID**：[src/helm/types.go:25](src/helm/types.go#L25) 加字段
+```
+1. GET /session/list → 展示会话
+2. POST /session/create 或 /session/resume
+3. 用户输入消息
+4. POST /session/prompt (SSE)
+   ├─ EventTextDelta → stdout
+   ├─ EventAsk → stdin y/n → POST /ask/reply (SSE)
+   └─ EventDone → 回到步骤 3
+```
 
-### 相关模块状态
+### 设计要点
 
-| 模块 | 状态 |
-|------|------|
-| vault | ✅ MVP 代码完成，待集成 |
-| helm | 🚧 待加 vault 写入点 |
-| cli | 🚧 待加 vault 初始化 + 会话列表 |
-| brig | ✅ 已有 ToolVerdict 对应的 brig.Verdict（Allow/Ask/Deny），需映射到 ToolVerdict 5 态 |
+- HTTP 客户端直连 `localhost:4090`（支持 `--addr` 覆盖）
+- SSE 解析：按行读 `data: {...}`，反序列化 JSON
+- `EventAsk` 处理：展示原因 → 读 stdin → POST `/ask/reply` → 继续消费 SSE
+- CLI 不再需要 `voyage.Create/Resume/List` 等直接调用，全部通过 HTTP
+- 旧 `helm.RunLoop` 可保留至 CLI 迁完，再整体移除 `loop.go` / `checkpoint.go`
 
-### 编译运行
+### 建议实现顺序
 
+1. 写 SSE 客户端解析器
+2. HTTP 请求封装（create / list / resume / prompt / ask-reply）
+3. 事件消费循环
+4. 清理旧代码
+
+### 手动测试
+
+启动 server：
 ```bash
-cd c:/Users/Gaiusliu/Desktop/code/argo
-go build -o argo.exe ./src/cli/
-./argo.exe
+./argo-server.exe
+```
+
+curl 测试：
+```bash
+# 创建
+curl -s -X POST http://localhost:4090/session/create -d '{"cwd":"./"}'
+
+# 列表
+curl -s http://localhost:4090/session/list | python -m json.tool
+
+# 发送消息（SSE 流）
+curl -N -X POST http://localhost:4090/session/prompt -d '{"sessionID":"sess_xxx","message":"hello"}'
 ```

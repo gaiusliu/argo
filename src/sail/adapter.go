@@ -15,6 +15,8 @@ import (
 	"argo/src/knot"
 )
 
+var ChatDefaultTimeout = 5 * time.Minute
+
 // openAIReq OpenAI /v1/chat/completions 请求体
 type openAIReq struct {
 	Model    string       `json:"model"`
@@ -182,10 +184,6 @@ func (s *streamState) handleChunk(raw []byte) ([]knot.Event, error) {
 			s.thinkingActive = false
 		}
 		if _, seen := s.toolCalls[tc.Index]; !seen {
-			events = append(events, knot.Event{
-				Type:    knot.EventToolUseStart,
-				ToolUse: knot.ToolUse{ID: tc.ID, Name: tc.Function.Name},
-			})
 			s.toolCalls[tc.Index] = toolCallState{id: tc.ID, name: tc.Function.Name}
 		}
 		// 累积 arguments 片段，flush 时统一发出完整 Delta
@@ -274,11 +272,11 @@ func parseSSE(ctx context.Context, body io.ReadCloser, out chan<- knot.Event) {
 		out <- evt
 	}
 	if err := scanner.Err(); err != nil {
-		out <- knot.Event{Type: knot.EventError, Err: fmt.Errorf("sail: sse: %w", err)}
+		out <- knot.Event{Type: knot.EventError, Err: fmt.Errorf("sail: sse scanner: %w", err)}
 	}
 
 	if err := ctx.Err(); err != nil {
-		out <- knot.Event{Type: knot.EventError, Err: fmt.Errorf("sail: sse: %w", err)}
+		out <- knot.Event{Type: knot.EventError, Err: fmt.Errorf("sail: sse ctx: %w", err)}
 	}
 }
 
@@ -306,6 +304,7 @@ func doChat(ctx context.Context, apiKey, baseURL, modelName string, req knot.Cha
 		}
 
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewReader(body))
+		// defer cancel()
 		if err != nil {
 			return nil, fmt.Errorf("sail: new request: %w", err)
 		}
@@ -337,7 +336,7 @@ func doChat(ctx context.Context, apiKey, baseURL, modelName string, req knot.Cha
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		ae := classifyError(resp.StatusCode, respBody, resp.Header)
-
+		slog.Error("doChat failed", "error", ae, "base url", baseURL)
 		if !ae.Retryable || attempt >= maxRetries-1 {
 			out := make(chan knot.Event, 1)
 			out <- knot.Event{Type: knot.EventError, Err: ae}

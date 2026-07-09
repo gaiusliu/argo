@@ -510,3 +510,189 @@ Argo 当前尚无 Session 模块，且 `WorkingDir` 需要作为 `ToolCall` 指�
 **替代方案**：
 - `syscall.Flock` — 需要两份平台文件，Windows 上 API 完全不同（`LockFileEx`），增加维护负担
 - `sync.Mutex` — 单进程够用但不跨进程，未来 Gateway mode 多实例场景需要文件锁
+
+## DEC-035：server 无状态——状态机暂停通过磁盘序列化 + goroutine 退出
+
+**状态**：✅ 现行
+
+**日期**：2026-07-09
+
+**决策**：helm 状态机遇 EventAsk 时，goroutine 退出（不阻塞不等待），LoopState 序列化为 JSON 写入 session 目录。下次请求从磁盘恢复状态，启动新 goroutine 继续。server 不维护任何会话级内存状态（sessions map、pending ask channel、等待队列）。
+
+**新消息路径**：
+
+```
+POST /session/prompt { sessionID, message }
+  │
+  ▼
+Vault.Load()  ← transcript.jsonl  读取对话历史
+  │
+  ▼
+NewPromptState(messages, userMsg)  构造 LoopState { Phase: PhaseLLM }
+  │
+  ▼
+helm.Run()
+  │
+  ├─ PhaseLLM ─→ LLM 调用 + SSE 流式消费
+  │     │
+  │     ├─ 无工具调用 ─→ PhaseDone ─→ EventDone ─→ SSE 关闭
+  │     │
+  │     └─ 有工具调用 ─→ PhaseExecuteTools
+  │                          │
+  │           ┌──────────────┼──────────────┐
+  │           ▼              ▼              ▼
+  │       AutoAllow      Ask           AutoDeny
+  │           │              │              │
+  │     执行工具        ┌───┘        记录拒绝结果
+  │           │              │
+  │     继续循环        EventAsk ─→ SSE 发送
+  │                                      │
+  │                          saveLoopState(state.json)
+  │                                      │
+  │                          goroutine 退出 ─→ SSE 连接关闭
+  │
+  └─ (连接已断，等待客户端下次请求)
+```
+
+**Ask 回复路径**：
+
+```
+POST /session/prompt { sessionID, askID, allow }
+  │
+  ▼
+loadLoopState()  ← state.json  恢复上次暂停的 LoopState
+  │
+  ├─ Phase ≠ PhaseWaitAsk ─→ 409 Conflict
+  ├─ AskID 不匹配        ─→ 400 Bad Request
+  │
+  ▼
+NewReplyState(prev, reply)  注入用户回复 (Allowed/Denied)
+  │
+  ▼
+helm.Run()
+  │
+  └─ PhaseExecuteTools  从 ToolUseIndex 断点继续
+        │
+        ├─ 注入的回复如果是 Allowed → 执行工具
+        │  如果是 Denied  → 记录拒绝结果
+        │
+        └─ 继续后续工具 → PhaseLLM → ... → PhaseDone → SSE 关闭
+```
+
+**代价**：SSE 连接在 Ask 时断开重建（而非一直保持阻塞等待），客户端需处理流切换（DEC-036）。
+
+**替代方案**：server 维护 `pendingAsks map[string]chan AskResult`，SSE 连接保持打开，goroutine 阻塞等待 channel。被否决——引入内存状态违背无状态设计目标，且 server 重启后 pending ask 全部丢失。
+
+## DEC-036：客户端 SSE 流接力——单循环 + channel 替换 + cancel 释放
+
+**状态**：✅ 现行
+
+**日期**：2026-07-09
+
+**决策**：客户端在 EventAsk 时通过三步入操作完成 SSE 流切换：(1) `cancel()` 释放旧连接的 HTTP body，(2) `sendAskReply` 发起新连接获取新 channel，(3) 将新 channel 赋值给同一个 `events` 变量，单层 `for` 循环继续消费。不递归、不嵌套、不累积 goroutine。
+
+**完整流程**：
+
+```
+main.go:
+
+sendPrompt(sessionID, message)
+  │
+  ▼
+events channel ──────────────────────────────────────────────┐
+  │                                                          │
+  ▼                                                          │
+for ev := range events {                                     │
+  │                                                          │
+  ├─ EventTextDelta      → stdout                            │
+  ├─ EventToolUseStart   → showToolStart()                   │
+  ├─ EventToolUseDone    → showToolDone()                    │
+  ├─ EventError          → stderr                            │
+  ├─ EventDone           → 退出循环，回到 REPL                  │
+  │                                                          │
+  └─ EventAsk ──────────────────────────────────────────────┘
+        │                                        outer loop
+        ▼
+    askCLI()  阻塞读 stdin (y/n)
+        │
+        ▼
+    cancel()  ───────────────────────────────────────────────┐
+        │  ① 关旧 body                                       │
+        │  ② goroutine 的 scanner.Scan() 报错退出             │
+        │  ③ defer close(out) 关闭旧 channel                  │
+        │                                                    │
+        ▼                                                    │
+    sendAskReply(sessionID, askID, allow)                    │
+        │                                                    │
+        ▼                                                    │
+    events channel  ← 被替换为新 channel                       │
+        │                                                    │
+        ▼                                                    │
+    for ev := range events {  ← 同一个 for 循环               │
+        ├─ EventTextDelta      → stdout                      │
+        ├─ ...                                              │
+        └─ EventDone           → 退出，回到 REPL               │
+    }                                                        │
+```
+
+**cancel 的底层机制**：
+
+```
+cancel() → resp.Body.Close()
+  │
+  ▼
+*http.bodyEOFSignal.Close()     ← transport.go:3087
+  │
+  ├─ mu.Lock()                  ← 互斥锁保护
+  ├─ if closed { return nil }   ← 幂等：第二次调用直接返回
+  ├─ closed = true              ← 标记已关闭
+  └─ earlyCloseFn()             ← 关闭底层 TCP 连接
+                                   │
+                                   ▼
+scanner.Scan() 内部调用 Read()  ← transport.go:3064
+  │
+  ├─ mu.Lock()
+  ├─ 看到 closed == true
+  └─ return errReadOnClosedResBody  ← 立刻返回错误
+                                         │
+                                   scanner.Scan() 返回 false
+                                         │
+                                   goroutine 正常退出
+```
+
+**三个关键点**：
+
+1. **cancel 天然幂等** — `bodyEOFSignal` 内置 `sync.Mutex` + `closed` 标志，并发安全且多次调用无副作用
+
+2. **events 直接赋值替换** — 同一变量绑定新 channel，`for` 循环无感知，不需要 label/goto/递归
+
+3. **server 已主动关闭的连接** — Ask 后 server 侧 goroutine 退出 → handler return → TCP 关闭，客户端 cancel 是保险兜底，双重保障零 goroutine 泄漏
+
+**验证**：独立测试代码 `test_sse_server.go` + `test_sse_client.go`，server 模拟 50 条事件含 20 个 ask 断点、客户端活跃 goroutine 计数器验证无泄漏，每次 ask 后 goroutine 正确退出。
+
+## DEC-037：Vault 成为对话历史唯一数据源，LoopState 只保留控制流
+
+**状态**：✅ 现行
+
+**日期**：2026-07-09
+
+**决策**：`LoopState` 删除 `Messages`、`MsgCount`、`ToolMeta`、`Usage`、`AskReply` 六个字段，对话历史仅由 `transcript.jsonl`（Vault）管理。`state.json` 从 O(对话轮次) 缩减为固定大小（~300B），只存状态机控制流字段。
+
+**背景**：改造前 `LoopState.Messages` 和 Vault 双写同一份对话历史。`state.json` 含完整消息数组随对话轮次增长，`handlePrompt` 两条路径数据来源不一致——新消息路径读 Vault，Ask 回复路径用 state.json 自带的 Messages。
+
+**改造要点**：
+
+1. **LoopState 瘦身**：保留 `Phase`、`TurnCount`、`ModelName`、`ToolUses`、`ToolUseIndex`、`AskReason`、`AskID`。对话历史改为 `Run()` 的入参 `*[]knot.Message` 指针，goroutine 内 Phase 间共享。
+
+2. **handlePrompt 统一入口**：无论新消息还是 Ask 回复，先 `Vault.Load()` 获取对话历史，再构造 LoopState 控制流。
+
+3. **写入时机从批量改为逐条**：
+   | 消息类型 | 改前 | 改后 |
+   |---------|------|------|
+   | user | 不写，靠批量兜底 | handlePrompt 入口立刻 `Append` |
+   | assistant | 不写，靠批量兜底 | runPhaseLLM 结束立刻 `Append` |
+   | tool | 累计到最后 batch `Append` | 每条执行完立刻 `Append` |
+
+4. **ToolMeta 删除**：verdict + status 在执行当时已知，直接写入 Record，不再需要跨 Phase 的内存缓存。
+
+**收益**：消除双写不一致风险；state.json 体积恒定；崩溃后可从 transcript.jsonl 完整恢复对话。

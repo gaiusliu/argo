@@ -13,7 +13,7 @@ knot 是 Argo 的跨模块共享类型包。存放不属于任何单一模块但
 | ToolUse | 工具调用载体——LLM 发起时 Result.Status=StatusDefault，执行后 Result 填充 |
 | ToolResult | 工具执行结果（Output + Status + Metadata） |
 | Tool | 工具接口——Name / Description / Source / ParametersSchema / Execute，由 deck 实现 |
-| AskUser | 用户确认回调签名——`func(tu ToolUse, reason string) (bool, error)`，brig 判定 Ask 时 RunLoop 调用 |
+| AskResult | EventAsk 的回复类型：AskAllowed / AskDenied / AskDefault（未知即拒绝） |
 | Config | 全局配置聚合——DeckConfig + SailConfig，JSON 序列化 |
 | TokenLimit / TokenUsage | 模型 token 限制与消耗统计 |
 
@@ -24,11 +24,11 @@ knot 是 Argo 的跨模块共享类型包。存放不属于任何单一模块但
 knot 是依赖链的起点，不 import 任何 Argo 内部包。模块关系：
 
 ```
-knot  ←  deck  ←  helm  ←  cmd/run
-  ↑        ↑        ↑
-  └── sail ┘        └── brig（knot + helm + deck）
-  └── reef
-  └── brig（仅依赖 knot.ToolUse）
+knot  ←  deck  ←  helm  ←  argo-server
+  ↑        ↑        ↑        ↑
+  ├── sail ┘        ├── brig │
+  ├── reef          ├── voyage┘
+  └── vault ────────┘
 ```
 
 ### 类型归属判定
@@ -37,10 +37,10 @@ knot  ←  deck  ←  helm  ←  cmd/run
 
 - `Message`、`Event`、`ToolUse`：helm ↔ sail 之间流式通信
 - `Tool`、`ToolResult`：deck 定义，但 helm/brig/sail 都引用（knot 中只有接口，实现在 deck）——`ParametersSchema()` 方法供 sail adapter 构造 OpenAI function calling 的 `tools` 字段
-- `AskUser`：brig 判定、helm 调用、cmd/run 实现——三方的桥梁类型
+- `AskResult`：EventAsk 驱动——helm 发事件、server 转发、CLI 处理、（server 注入 Run）
 - `Config`：deck + sail + vault 共用的配置结构
 
 ### 不放入 knot 的
 
 - 模块内部类型（如 `streamState`、`builtinTool`）留在各自包内
-- 模块专属数据结构（如 `TurnState` 在 helm、`Rule` 在 brig）
+- 模块专属数据结构（如 `LoopState` 在 helm、`Rule` 在 brig）

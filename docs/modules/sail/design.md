@@ -37,7 +37,7 @@ sail 是 Argo 的 LLM 接入层——加载配置、路由 provider、发起流�
 构造 OpenAI Chat Completions 请求体 → POST 到 `{baseURL}/v1/chat/completions` → 非 200 返回单事件 error channel → 200 启动 goroutine 进入 `parseSSE`。
 
 - **HTTP 头**：`Authorization: Bearer {apiKey}` + `Content-Type: application/json`
-- **超时**：通过 `ctx` 注入 `http.NewRequestWithContext`，不设整轮截止时间
+- **超时**：`ChatDefaultTimeout` 导出到包级别，由 helm `runPhaseLLM` 通过 `context.WithTimeout` 覆盖整个 LLM 调用 + SSE 消费周期
 - **非 200**：立即 `close(out)`，返回只含一个 `EventError` 的 channel
 
 ### parseSSE——SSE 解析 + 安全退出

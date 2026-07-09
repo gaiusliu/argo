@@ -2,7 +2,7 @@
 
 ## 概述
 
-vault 是 Argo 的统一会话存储层。负责 session 生命周期管理（创建/列表/查看/删除）、对话 transcript 持久化（追加/读取），以及 Message ↔ Record 的单向转换。MVP 阶段使用文件系统后端（`FileVault`），`Vault` 接口预留后端切换能力。
+vault 是 Argo 的纯存储层。负责对话 transcript 的持久化（Append/Load）和 Message ↔ Record 的单向转换。Session CRUD（创建/恢复/列表/删除）已迁至 voyage 模块（DEC-037）。MVP 阶段使用文件系统后端（`FileVault`），`Vault` 接口预留后端切换能力。
 
 vault 依赖 knot（`Load` 返回 `[]knot.Message`），不依赖 helm/deck/sail。AGENTS.md 和 PROFILE.md 不经过 vault——前者由 helm 直接读取，后者留待后续的 deck 工具实现。
 
@@ -22,13 +22,6 @@ Record 字段详细设计见 [transcript.md](transcript.md)。
 | session.json | SessionInfo 的 JSON 缓存，CreateSession 写入，Append 时更新动态字段 |
 
 ## 行为合约
-
-### Session CRUD
-
-- **CreateSession**：生成唯一 session ID（`sess_<hex>_<hex>`），创建 `~/.argo/sessions/{id}/` 目录，写入初始 `session.json`
-- **ListSessions**：扫描 `sessions/` 目录，读取各子目录的 `session.json`，按 `LastActiveAt` 倒序排列。不存在则返回空切片。目录损坏（`session.json` 缺失/格式错误）记日志跳过，不阻塞整体列表
-- **GetSession**：读取指定 session 的 `session.json`，文件不存在时返回错误
-- **DeleteSession**：`os.RemoveAll` 立刻物理删除整个 session 目录，不可恢复
 
 ### Transcript 读写
 

@@ -2,7 +2,7 @@
 
 ## 概述
 
-brig 是 Argo 的权限审批门控模块。在 helm.RunLoop 执行工具前，brig 按规则判定 Allow/Ask/Deny，决定工具调用是直通执行、需用户确认、还是直接拒绝。brig 不依赖 helm/deck/sail，只依赖 `knot.ToolUse`。
+brig 是 Argo 的权限审批门控模块。在 helm.helm.Run 执行工具前，brig 按规则判定 Allow/Ask/Deny，决定工具调用是直通执行、需用户确认、还是直接拒绝。brig 不依赖 helm/deck/sail，只依赖 `knot.ToolUse`。
 
 ## 核心概念
 
@@ -11,10 +11,12 @@ brig 是 Argo 的权限审批门控模块。在 helm.RunLoop 执行工具前，b
 | Verdict | 三态裁决：Allow（直通执行）/ Ask（征求用户确认）/ Deny（直接拒绝，不可绕过） |
 | Rule | 统一结构 `{Tool, Pattern, Action}`，仅用于静态规则 |
 | ToolCall | 工具调用指纹 `{ToolName, RawParam, WorkingDir}`——动态审批的精确匹配键 |
-| Engine | 规则引擎，持有静态规则列表 + 用户审批 map + 互斥锁，每个 session 一个独立实例 |
-| Static Rule | 代码内置规则（deny 库 + 命令分类表），NewEngine 时加载，只读不修改 |
+| Guard | 权限门控接口：Evaluate / Approve / IsCachedApproval / Snapshot / Restore |
+| FileGuard | Guard 的文件系统实现，持有静态规则列表 + 用户审批 map，每个 session 一个独立实例 |
+| Static Rule | 代码内置规则（deny 库 + 命令分类表），NewFileGuard 时加载，只读不修改 |
 | Dynamic Approval | 用户确认后以精确 ToolCall 指纹存入 `userApprovals` map，同指纹再次出现自动 Allow |
-| AskUser | 用户确认回调 `func(tu ToolUse, reason string) (bool, error)`，定义在 knot，由调用方注入 |
+| ApprovalEntry | 审批记录持久化结构，Snapshot / Restore 使用 |
+| approvals.json | 审批记录持久化文件，ResumeSession 时自动恢复 |
 
 ## 流程
 
@@ -40,7 +42,7 @@ brig 是 Argo 的权限审批门控模块。在 helm.RunLoop 执行工具前，b
 
 ```
 helm 收到 ToolUse
-  → eng.Evaluate(tu)
+  → guard.Evaluate(tu)
       │
       ├─ getRawParam(tu)                  ← 提取原始参数字符串（命令/路径/URL）
       │   └─ fieldFromArgs(name, params)  ← 查 toolParamKeys 表，按工具名取参数字段
@@ -61,11 +63,11 @@ helm 收到 ToolUse
 
 ### 3. Approve：精确指纹匹配的动态审批
 
-用户确认后，RunLoop 调用 `eng.Approve(tu)`：加锁 → 取 `getRawParam` + `scopeKey` 构造 `ToolCall` 指纹 → 存入 `userApprovals` map。
+用户确认后，helm.Run 调用 `guard.Approve(tu)`：加锁 → 取 `getRawParam` + `scopeKey` 构造 `ToolCall` 指纹 → 存入 `userApprovals` map。
 
 **不做泛化**——不将 `rm -rf /tmp/test` 概括为 `rm -rf*`，只有**完全相同的 ToolCall 指纹**（工具名 + 审批键 + 工作目录）再次出现时才自动 Allow。唯一例外：`web_fetch` 通过 `scopeKey` 将完整 URL 转为域名作为审批键，与 pi/opencode 的 `allowedDomains` 一致。这是一种保守的安全策略——只记住"用户同意的那个确切操作"。
 
-### 4. RunLoop 集成
+### 4. helm.Run 集成
 
 brig 在 helm 工具执行前做门控：`Evaluate` 返回 Allow → 执行；Ask → 弹出确认框，用户同意则 `Approve` 后执行；Deny → 返回拒绝原因。结果注入 `state.Messages` 进入下一轮 LLM。
 
@@ -125,15 +127,21 @@ case 6 通过 `isBoundary` 辅助函数检查前缀匹配后的剩余文本首�
 
 ### 规则引擎
 
-- 静态规则在 NewEngine() 时加载一份副本，所有 session 共享同一来源但各自独立
+- 静态规则在 NewFileGuard() 时加载一份副本，所有 session 共享同一来源但各自独立
 - 静态规则求值：5 层固定顺序遍历，**首个命中即返回**（非"最后命中者胜"）
 - 动态审批：用户确认后以精确 ToolCall 指纹存入 `userApprovals` map（非泛化 pattern），同指纹再出现自动 Allow
 - `userApprovals` 由 mu 保护并发写入，读取无锁（Go map 并发读安全，写由 mu 保护）
 
+### 审批持久化
+
+- Snapshot() 返回当前 userApprovals 的快照（[]ApprovalEntry）
+- Restore() 从快照恢复动态审批记录
+- 审批记录通过 voyage.SaveApprovals 持久化到 approvals.json
+- ResumeSession 时自动 loadApprovals → Guard.Restore 恢复
+
 ### 会话隔离
 
-- 每个 session 持有独立 Engine 实例，动态审批不跨 session 共享
-- Snapshot() / Restore() 预留持久化接口，当前为空桩
+- 每个 session 持有独立 Guard 实例，动态审批不跨 session 共享
 
 ### brig 边界
 
