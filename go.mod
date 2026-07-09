@@ -7,6 +7,7 @@ require (
 	github.com/PuerkitoBio/goquery v1.9.2 // indirect
 	github.com/andybalholm/cascadia v1.3.2 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
+	github.com/go-chi/chi/v5 v5.3.1 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 )
