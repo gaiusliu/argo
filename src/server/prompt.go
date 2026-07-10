@@ -21,7 +21,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 从磁盘恢复 session
-	session, err := voyage.ResumeSession(s.baseDir, body.SessionID)
+	session, err := voyage.ResumeSession(knot.ArgoDir(), body.SessionID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -39,7 +39,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 
 	if body.AskID != "" {
 		// Ask 回复路径：加载暂停的控制流状态，注入回复
-		st, err = loadLoopState(s.baseDir, body.SessionID)
+		st, err = loadLoopState(knot.ArgoDir(), body.SessionID)
 		if err != nil {
 			http.Error(w, "no pending ask for session", http.StatusNotFound)
 			return
@@ -77,7 +77,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	streamAndSave(w, s.baseDir, body.SessionID, events, st, session)
+	streamAndSave(w, knot.ArgoDir(), body.SessionID, events, st, session)
 }
 
 // streamAndSave SSE 转发所有事件。通道关闭后持久化 LoopState 和审批记录。

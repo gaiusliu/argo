@@ -1,20 +1,10 @@
 package helm
 
 import (
-	"os"
 	"path/filepath"
 
 	"argo/src/knot"
 )
-
-// ArgoDir 返回 ~/.argo/ 全局配置目录，home 取不到返回空字符串
-func ArgoDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".argo")
-}
 
 // ProjectDir 返回 <root>/.argo/ 项目配置目录
 func ProjectDir(root string) string {

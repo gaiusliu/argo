@@ -24,7 +24,7 @@ func runPhaseExecuteTools(ctx context.Context, st *LoopState, session *voyage.Se
 			emit(knot.Event{Type: knot.EventToolUseDone, ToolUse: *tu})
 
 			// 立刻写入 vault
-			appendToolResult(msgs, session, *tu, vault.VerdictAutoDeny, st.ModelName)
+			appendToolResult(msgs, session, *tu, knot.VerdictAutoDeny, st.ModelName)
 			continue
 		}
 
@@ -34,20 +34,20 @@ func runPhaseExecuteTools(ctx context.Context, st *LoopState, session *voyage.Se
 		case brig.Deny:
 			tu.Result = knot.ToolResult{Status: knot.StatusError, Output: reason}
 			emit(knot.Event{Type: knot.EventToolUseDone, ToolUse: *tu})
-			appendToolResult(msgs, session, *tu, vault.VerdictAutoDeny, st.ModelName)
+			appendToolResult(msgs, session, *tu, knot.VerdictAutoDeny, st.ModelName)
 
 		case brig.Ask:
 			st.ToolUseIndex = i
 			st.AskReason = reason
 			st.AskID = knot.NewAskID()
 			st.Phase = PhaseWaitAsk
-			emit(knot.Event{Type: knot.EventAsk, ToolUse: *tu, AskReason: reason, AskID: st.AskID})
+			// emit(knot.Event{Type: knot.EventAsk, ToolUse: *tu, AskReason: reason, AskID: st.AskID})
 			return false
 
-		case brig.Allow:
-			v := vault.VerdictAutoAllow
+		case brig.Approve:
+			v := knot.VerdictAutoAllow
 			if session.Guard.IsCachedApproval(*tu) {
-				v = vault.VerdictCachedAllow
+				v = knot.VerdictCachedAllow
 			}
 			emit(knot.Event{Type: knot.EventToolUseStart, ToolUse: *tu})
 			slog.Info("执行工具", "tool", tu.Name, "session id", session.ID, "cwd", session.WorkingDir)
@@ -69,7 +69,7 @@ func runPhaseExecuteTools(ctx context.Context, st *LoopState, session *voyage.Se
 }
 
 // appendToolResult 将单条工具执行结果立刻写入 vault。
-func appendToolResult(msgs *[]knot.Message, session *voyage.Session, tu knot.ToolUse, verdict vault.ToolVerdict, modelName string) {
+func appendToolResult(msgs *[]knot.Message, session *voyage.Session, tu knot.ToolUse, verdict knot.ToolVerdict, modelName string) {
 	status := "error"
 	if tu.Result.Status == knot.StatusSuccess {
 		status = "success"

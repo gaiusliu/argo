@@ -3,27 +3,26 @@
 package brig
 
 import (
+	"argo/src/knot"
 	"log/slog"
 	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
-
-	"argo/src/knot"
 )
 
-// Verdict 工具调用的三态裁决结果
-type Verdict int
-
 const (
-	Allow Verdict = iota // 免审批，直接执行
-	Ask                  // 需用户确认
-	Deny                 // 直接拒绝
+	Default     int = iota
+	Approve         // 免审批，直接执行
+	Ask             // 需用户确认
+	Deny            // 直接拒绝
+	UserApprove     // 用户审批通过
+	UserDeny        // 用户审批拒绝
 )
 
 // Guard 工具调用鉴权接口。
 type Guard interface {
-	Evaluate(tu knot.ToolUse) (Verdict, string)
+	Evaluate(tu knot.ToolUse) (int, string)
 	Approve(tu knot.ToolUse)
 	IsCachedApproval(tu knot.ToolUse) bool
 	Snapshot() []ApprovalEntry // 导出用户审批记录
@@ -32,9 +31,9 @@ type Guard interface {
 
 // Rule 规则即记忆 — 既是求值依据，也是已审批记录
 type Rule struct {
-	Tool    string  // 工具名（bash / write / edit / web_fetch / read / grep）
-	Pattern string  // 匹配模式（命令、目录、域名、文件路径）
-	Action  Verdict // Allow / Ask / Deny
+	Tool    string // 工具名（bash / write / edit / web_fetch / read / grep）
+	Pattern string // 匹配模式（命令、目录、域名、文件路径）
+	Action  int    // Allow / Ask / Deny
 }
 
 // ApprovalEntry 用户审批记录的持久化条目。
@@ -70,7 +69,7 @@ func NewFileGuard(workingDir string) *FileGuard {
 // resolveStaticRules 遍历静态规则列表，首个命中即返回（不再取最高优先级）。
 // 正确性依赖 loadStaticRules 中规则组的排列顺序——Deny 组必须在 Allow/Ask 组之前。
 // 如需调整规则顺序，参见 deny.go 中 loadStaticRules 的注释。
-func resolveStaticRules(staticRules []Rule, tc ToolCall) (Verdict, string) {
+func resolveStaticRules(staticRules []Rule, tc ToolCall) (int, string) {
 	for _, rule := range staticRules {
 		if rule.Tool != tc.ToolName {
 			continue
@@ -80,8 +79,8 @@ func resolveStaticRules(staticRules []Rule, tc ToolCall) (Verdict, string) {
 				return Deny, formatReason(tc, "denied")
 			}
 
-			if rule.Action == Allow {
-				return Allow, formatReason(tc, "allowed")
+			if rule.Action == Approve {
+				return Approve, formatReason(tc, "allowed")
 			}
 
 			if rule.Action == Ask {
@@ -117,7 +116,7 @@ func formatReason(tc ToolCall, suffix string) string {
 
 // Evaluate 对工具调用做门控判定，返回裁决和原因描述。
 // 流程：静态规则匹配（Deny > Allow > Ask）→ 已审批检查。
-func (fg *FileGuard) Evaluate(tu knot.ToolUse) (Verdict, string) {
+func (fg *FileGuard) Evaluate(tu knot.ToolUse) (int, string) {
 	tc := ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: fg.workingDir}
 	verdict, reason := resolveStaticRules(fg.staticRules, tc)
 	slog.Info("门控判定", "tool", tu.Name, "verdict", verdict, "reason", reason)
@@ -125,12 +124,12 @@ func (fg *FileGuard) Evaluate(tu knot.ToolUse) (Verdict, string) {
 	case Deny:
 		return Deny, reason
 
-	case Allow:
-		return Allow, reason
+	case Approve:
+		return Approve, reason
 
 	case Ask:
 		if fg.approved(tc) {
-			return Allow, formatReason(tc, "user approved")
+			return Approve, formatReason(tc, "user approved")
 		}
 
 		return Ask, formatReason(tc, "permission required")

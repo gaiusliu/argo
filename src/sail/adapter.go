@@ -226,18 +226,19 @@ func (s *streamState) flush() []knot.Event {
 }
 
 // parseSSE 逐行读取 SSE 流，解析后推入 channel。ctx 取消时退出，不泄漏 goroutine。
-func parseSSE(ctx context.Context, body io.ReadCloser, out chan<- knot.Event) {
+func parseSSE(ctx context.Context, respBody io.ReadCloser, out chan<- knot.Event) {
+	// 不能忘了关channel和body
 	defer close(out)
-	defer body.Close()
+	defer respBody.Close()
 
 	// ctx 取消 → 关闭 body 中断阻塞的 scanner；不泄漏 goroutine
 	stopAfter := context.AfterFunc(ctx, func() {
-		body.Close()
+		respBody.Close()
 	})
 	defer stopAfter()
 
 	state := newStreamState()
-	scanner := bufio.NewScanner(body)
+	scanner := bufio.NewScanner(respBody)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {

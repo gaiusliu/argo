@@ -68,10 +68,10 @@ func runPhaseLLM(ctx context.Context, st *LoopState, session *voyage.Session, ms
 	}
 
 	// 有工具调用 → 记录 tool_calls，写入 assistant 记录，转入执行阶段
-	toolCalls := make([]knot.ToolCallDetail, len(toolUses))
+	toolCalls := make([]knot.ToolCall, len(toolUses))
 	for i, tu := range toolUses {
 		argsBytes, _ := json.Marshal(tu.Parameters)
-		toolCalls[i] = knot.ToolCallDetail{ID: tu.ID, Name: tu.Name, Arguments: string(argsBytes)}
+		toolCalls[i] = knot.ToolCall{ID: tu.ID, Name: tu.Name, Arguments: string(argsBytes)}
 	}
 	assistantMsg := knot.Message{
 		Role:      knot.MessageRoleAssistant,

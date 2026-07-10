@@ -3,13 +3,14 @@ package server
 import (
 	"time"
 
+	"argo/src/knot"
 	"argo/src/voyage"
 )
 
 // ---- 请求体 ----
 
-// CreateSessionRequest POST /session/create 请求体。
-type CreateSessionRequest struct {
+// NewSessionRequest POST /session/create 请求体。
+type NewSessionRequest struct {
 	CWD string `json:"cwd"`
 }
 
@@ -20,6 +21,13 @@ type PromptRequest struct {
 	Message   string `json:"message,omitempty"`
 	AskID     string `json:"askID,omitempty"`
 	Allow     bool   `json:"allow,omitempty"`
+}
+
+type NewPromptRequest struct {
+	SessionID       string         `json:"sessionID"`
+	Message         string         `json:"message,omitempty"`
+	Model           string         `json:"model,omitempty"`
+	ToolUseVerdicts []knot.ToolUse `json:"toolUseVerdicts,omitempty"`
 }
 
 // ResumeSessionRequest POST /session/resume 请求体。
@@ -59,19 +67,14 @@ func ToSessionInfoJSON(info voyage.SessionInfo) SessionInfoJSON {
 		WorkingDir:   info.WorkingDir,
 		CreatedAt:    info.CreatedAt,
 		LastActiveAt: info.LastActiveAt,
-		MessageCount: info.MessageCount,
 		Name:         info.Name,
-		Tokens: TokensJSON{
-			Input:  info.Tokens.Input,
-			Output: info.Tokens.Output,
-		},
 	}
 }
 
 // ---- 响应体 ----
 
-// CreateSessionResponse POST /session/create 响应体。
-type CreateSessionResponse struct {
+// NewSessionResponse POST /session/create 响应体。
+type NewSessionResponse struct {
 	SessionID string `json:"sessionID"`
 }
 

@@ -8,6 +8,15 @@ import (
 	"sync"
 )
 
+// ArgoDir 返回 ~/.argo/ 全局配置目录，home 取不到返回空字符串
+func ArgoDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".argo")
+}
+
 // LoadConfig 读取 ~/.argo/config.json，不存在则用默认配置生成并写盘
 func LoadConfig() (*Config, error) {
 	// 1. 默认骨架

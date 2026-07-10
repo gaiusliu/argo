@@ -13,62 +13,89 @@ import (
 	"time"
 
 	"argo/src/brig"
+	"argo/src/knot"
 	"argo/src/vault"
 )
 
-// SessionInfo 会话摘要，供 List 展示。
-type SessionInfo struct {
-	ID           string
-	WorkingDir   string
-	CreatedAt    time.Time
-	LastActiveAt time.Time
-	MessageCount int
-	Name         string
-	Tokens       SessionTokens
+type Voyage interface {
+	// 持久化保存
+	Save() error
+	// 加载会话记录
+	Load() ([]knot.Message, error)
+	// 会话重命名
+	Rename(name string)
+	// 返回ID
+	ID() string
+	// 工具使用规则审核
+	Evaluate(knot.ToolUse) (int, string)
+	// 当前工作路径
+	WorkingDir() string
+	// 添加对话记录
+	Append([]vault.Record) error
+	// 用户审批记录
+	UserApprovals() []brig.ApprovalEntry
+	// 用户审批通过
+	Approve(tu knot.ToolUse)
 }
 
-// SessionTokens 会话 token 累计统计。
-type SessionTokens struct {
-	Input  int64
-	Output int64
+// SessionInfo 会话摘要，供 List 展示。
+type SessionInfo struct {
+	// 会话ID
+	ID string
+	// 用户级配置目录
+	ArgoDir string
+	// 当前工作目录
+	WorkingDir string
+	// 创建时间
+	CreatedAt time.Time
+	// 最近变更时间
+	LastActiveAt time.Time
+	// 会话名
+	Name string
 }
 
 // Session 会话运行时上下文。嵌入 SessionInfo 自动提升元数据字段。
 type Session struct {
 	SessionInfo
-	Vault   vault.Vault
-	Guard   brig.Guard
-	baseDir string
+	Vault vault.Vault
+	Guard brig.Guard
 }
 
-// CreateSession 创建新会话：生成 ID → 建目录 → 写 session.json → 组装 Session。
-func CreateSession(baseDir, cwd string) (*Session, error) {
+// NewSession 创建新会话：生成 ID → 建目录 → 写 session.json → 组装 Session。
+func NewSession(argoDir, workingDir string) (*Session, error) {
 	id := genSessionID()
-	dir := sessionDir(baseDir, id)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, fmt.Errorf("voyage create: %w", err)
+
+	// 创建会话目录
+	sessionDir := sessionDir(argoDir, id)
+	if err := os.MkdirAll(sessionDir, 0700); err != nil {
+		slog.Error("new session mkdir failed", "error", err.Error(), "dir", sessionDir)
+		return nil, fmt.Errorf("new session failed: %w", err)
 	}
 
 	now := time.Now()
 	info := SessionInfo{
-		ID: id, WorkingDir: cwd, CreatedAt: now, LastActiveAt: now,
+		ID:           id,
+		WorkingDir:   workingDir,
+		CreatedAt:    now,
+		LastActiveAt: now,
+		ArgoDir:      argoDir,
 	}
-	if err := saveSessionInfo(dir, info); err != nil {
+	if err := saveSessionInfo(sessionDir, info); err != nil {
+		slog.Error("save session info failed", "error", err.Error(), "session dir", sessionDir)
 		return nil, err
 	}
 
 	return &Session{
 		SessionInfo: info,
-		Vault:       vault.NewFileVault(dir),
-		Guard:       brig.NewFileGuard(cwd),
-		baseDir:     baseDir,
+		Vault:       vault.NewFileVault(sessionDir),
+		Guard:       brig.NewFileGuard(workingDir),
 	}, nil
 }
 
 // Resume 恢复已有会话为完整 Session（含 Vault + Engine）。
 // 从 session.json 读取元数据，WorkingDir 自动用于创建 Engine。
-func ResumeSession(baseDir, id string) (*Session, error) {
-	dir := sessionDir(baseDir, id)
+func ResumeSession(argoDir, id string) (*Session, error) {
+	dir := sessionDir(argoDir, id)
 	info, err := loadSessionInfo(dir)
 	if err != nil {
 		return nil, fmt.Errorf("voyage resume: %w", err)
@@ -77,7 +104,6 @@ func ResumeSession(baseDir, id string) (*Session, error) {
 		SessionInfo: info,
 		Vault:       vault.NewFileVault(dir),
 		Guard:       brig.NewFileGuard(info.WorkingDir),
-		baseDir:     baseDir,
 	}
 
 	// 恢复已持久化的用户审批记录（新会话文件不存在为正常情况）
@@ -92,14 +118,78 @@ func ResumeSession(baseDir, id string) (*Session, error) {
 	return session, nil
 }
 
+// Resume 恢复已有会话为完整 Session（含 Vault + Engine）。
+// 从 session.json 读取元数据，WorkingDir 自动用于创建 Engine。
+func ResumeVoyage(id string) (Voyage, error) {
+	dir := sessionDir(knot.ArgoDir(), id)
+	info, err := loadSessionInfo(dir)
+	if err != nil {
+		return nil, fmt.Errorf("voyage resume: %w", err)
+	}
+	session := &Session{
+		SessionInfo: info,
+		Vault:       vault.NewFileVault(dir),
+		Guard:       brig.NewFileGuard(info.WorkingDir),
+	}
+
+	// 恢复已持久化的用户审批记录（新会话文件不存在为正常情况）
+	approvals, err := loadApprovals(dir)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("voyage resume: load approvals: %w", err)
+	}
+
+	if len(approvals) > 0 {
+		session.Guard.Restore(approvals)
+	}
+	return session, nil
+}
+
+func (s *Session) Approve(tu knot.ToolUse) {
+	s.Guard.Approve(tu)
+}
+
+func (s *Session) UserApprovals() []brig.ApprovalEntry {
+	return s.Guard.Snapshot()
+}
+
+func (s *Session) ID() string {
+	return s.SessionInfo.ID
+}
+
+func (s *Session) Save() error {
+	sessionDir := sessionDir(knot.ArgoDir(), s.SessionInfo.ID)
+	return saveSessionInfo(sessionDir, s.SessionInfo)
+}
+
+func (s *Session) Load() ([]knot.Message, error) {
+	return s.Vault.Load()
+}
+
+func (s *Session) Rename(name string) {
+	s.SessionInfo.Name = name
+}
+
+func (s *Session) Evaluate(tu knot.ToolUse) (int, string) {
+	return s.Guard.Evaluate(tu)
+}
+
+func (s *Session) WorkingDir() string {
+	return s.SessionInfo.WorkingDir
+}
+
 // SaveApprovals 持久化 Guard 中的用户审批记录到 session 目录。
 func SaveApprovals(s *Session) error {
-	return saveApprovals(sessionDir(s.baseDir, s.ID), s.Guard.Snapshot())
+	return saveApprovals(sessionDir(knot.ArgoDir(), s.ID()), s.Guard.Snapshot())
+}
+
+// SaveApprovals 持久化 Guard 中的用户审批记录到 session 目录。
+func SaveApprovalsNew(v Voyage) error {
+	return saveApprovals(sessionDir(knot.ArgoDir(), v.ID()), v.UserApprovals())
 }
 
 // List 列出所有会话信息，按最后活跃时间倒序。
-func ListSessions(baseDir string) ([]SessionInfo, error) {
-	root := filepath.Join(baseDir, "sessions")
+func ListSessions(argoDir string) ([]SessionInfo, error) {
+	root := filepath.Join(argoDir, "sessions")
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -150,12 +240,7 @@ func (s *Session) Append(records []vault.Record) error {
 
 	// 直接更新嵌入的 SessionInfo
 	s.LastActiveAt = time.Now()
-	s.MessageCount += len(records)
-	for _, r := range records {
-		s.Tokens.Input += int64(r.InputTokens)
-		s.Tokens.Output += int64(r.OutputTokens)
-	}
-	return saveSessionInfo(sessionDir(s.baseDir, s.ID), s.SessionInfo)
+	return saveSessionInfo(sessionDir(knot.ArgoDir(), s.SessionInfo.ID), s.SessionInfo)
 }
 
 // ---- 内部辅助 ----
@@ -184,8 +269,8 @@ func loadApprovals(dir string) ([]brig.ApprovalEntry, error) {
 	return entries, nil
 }
 
-func sessionDir(baseDir, id string) string {
-	return filepath.Join(baseDir, "sessions", id)
+func sessionDir(argoDir, id string) string {
+	return filepath.Join(argoDir, "sessions", id)
 }
 
 func genSessionID() string {

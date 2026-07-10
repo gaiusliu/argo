@@ -10,10 +10,10 @@ import (
 // toKnotEvent 将 server.EventJSON 转回 knot.Event。
 func toKnotEvent(ej server.EventJSON) knot.Event {
 	ev := knot.Event{
-		Type:      knot.EventType(ej.Type),
-		Delta:     ej.Delta,
-		AskReason: ej.AskReason,
-		AskID:     ej.AskID,
+		Type:  knot.EventType(ej.Type),
+		Delta: ej.Delta,
+		// AskReason: ej.AskReason,
+		// AskID:     ej.AskID,
 	}
 	if ej.Err != "" {
 		ev.Err = errors.New(ej.Err)

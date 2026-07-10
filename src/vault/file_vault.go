@@ -18,17 +18,17 @@ import (
 //	{sessionDir}/
 //	    └── transcript.jsonl          — 对话记录
 type FileVault struct {
-	dir string // session 目录，如 ~/.argo/sessions/sess_xxx/
+	sessionDir string // session 目录，如 ~/.argo/sessions/sess_xxx/
 }
 
 // NewFileVault 创建 FileVault 实例。dir 为 session 目录路径。
 func NewFileVault(dir string) *FileVault {
-	return &FileVault{dir: dir}
+	return &FileVault{sessionDir: dir}
 }
 
 // Append 追加 records 到 transcript.jsonl。
 func (v *FileVault) Append(records []Record) error {
-	return writeRecords(v.dir, records)
+	return writeRecords(v.sessionDir, records)
 }
 
 // writeRecords 将 records 逐行追加写入 transcript.jsonl。
@@ -53,7 +53,7 @@ func writeRecords(dir string, records []Record) error {
 
 // Load 读取 transcript.jsonl，映射为 knot.Message。新会话文件不存在时返回空列表。
 func (v *FileVault) Load() ([]knot.Message, error) {
-	records, err := readRecords(v.dir)
+	records, err := readRecords(v.sessionDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -66,6 +66,7 @@ func (v *FileVault) Load() ([]knot.Message, error) {
 func readRecords(dir string) ([]Record, error) {
 	f, err := os.Open(filepath.Join(dir, "transcript.jsonl"))
 	if err != nil {
+		slog.Error("read records failed", "error", err.Error(), "dir", dir)
 		return nil, err
 	}
 	defer f.Close()
@@ -106,14 +107,14 @@ func recordsToMessages(records []Record) []knot.Message {
 }
 
 func llmRecordToMessage(r Record) knot.Message {
-	var details []knot.ToolCallDetail
+	var details []knot.ToolCall
 	for _, tc := range r.ToolCalls {
 		argsBytes, err := json.Marshal(tc.Args)
 		if err != nil {
 			slog.Error("load: skip corrupt tool_call args", "call_id", tc.ToolCallID, "error", err)
 			continue
 		}
-		details = append(details, knot.ToolCallDetail{
+		details = append(details, knot.ToolCall{
 			ID:        tc.ToolCallID,
 			Name:      tc.Name,
 			Arguments: string(argsBytes),

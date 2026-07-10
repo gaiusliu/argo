@@ -11,7 +11,7 @@ import (
 
 // writeSSE 将 Event 转为 JSON 并以 SSE 格式写入 w。
 func writeSSE(w io.Writer, ev knot.Event) error {
-	data, err := json.Marshal(ToEventJSON(ev))
+	data, err := json.Marshal(ToEventJSONNew(ev))
 	if err != nil {
 		return fmt.Errorf("sse marshal: %w", err)
 	}

@@ -55,14 +55,15 @@ func (c *argoClient) streamEvents(path string, body any) (<-chan knot.Event, fun
 
 // sendPrompt 发送用户消息并返回 SSE 事件流和取消函数。
 func (c *argoClient) sendPrompt(sessionID, message string) (<-chan knot.Event, func(), error) {
-	return c.streamEvents("/session/prompt", server.PromptRequest{
+	return c.streamEvents("/session/prompt", server.NewPromptRequest{
 		SessionID: sessionID, Message: message,
 	})
 }
 
 // sendAskReply 发送用户对 EventAsk 的回复并返回 SSE 事件流和取消函数。
-func (c *argoClient) sendAskReply(sessionID, askID string, allow bool) (<-chan knot.Event, func(), error) {
-	return c.streamEvents("/session/prompt", server.PromptRequest{
-		SessionID: sessionID, AskID: askID, Allow: allow,
+func (c *argoClient) sendAskReply(sessionID string, tus []knot.ToolUse) (<-chan knot.Event, func(), error) {
+	return c.streamEvents("/session/prompt", server.NewPromptRequest{
+		SessionID:       sessionID,
+		ToolUseVerdicts: tus,
 	})
 }

@@ -42,7 +42,7 @@ const (
 )
 
 // ToolCallDetail assistant 消息中单个工具调用的元数据
-type ToolCallDetail struct {
+type ToolCall struct {
 	ID        string // 工具调用唯一 ID，对应 ToolUse.ID
 	Name      string // 工具名
 	Arguments string // JSON 序列化的参数
@@ -51,16 +51,20 @@ type ToolCallDetail struct {
 // Message 单条对话消息
 type Message struct {
 	// Role 取值为 MessageRoleSystem | MessageRoleUser | MessageRoleAssistant | MessageRoleTool
-	Role       MessageRole
-	Content    string
-	ToolCallID string           // role=tool 时必填，关联对应的 assistant tool_call
-	ToolCalls  []ToolCallDetail // role=assistant 时，记录本轮发起的工具调用
+	Role MessageRole
+	// 会话内容
+	Content string
+	// role=tool 时必填，关联对应的 assistant tool_call
+	ToolCallID string
+	// role=assistant 时，记录本轮发起的工具调用
+	ToolCalls []ToolCall
 }
 
 // ChatRequest LLM 调用请求
 type ChatRequest struct {
-	Messages []Message
-	Tools    []Tool
+	SystemPrompt Message
+	Messages     []Message
+	Tools        []Tool
 }
 
 // TokenLimit 模型 context window 上限
@@ -96,10 +100,10 @@ type Event struct {
 	Usage TokenUsage
 	// Err 错误信息，EventError 时携带。
 	Err error
-	// AskReason EventAsk 时需要用户确认的原因描述。
-	AskReason string
-	// AskID EventAsk 的唯一标识，server 模式下用于 HTTP 回执配对。
-	AskID string
+	// 被禁止的工具调用
+	DeniedToolUses []ToolUse
+	// 待审核的工具调用
+	AskingToolUses []ToolUse
 }
 
 // ToolUse 工具调用，Result.Status == StatusDefault 表示待执行
@@ -108,6 +112,10 @@ type ToolUse struct {
 	Name       string
 	Parameters map[string]any
 	Result     ToolResult
+	// 审核/驳回理由
+	VerdictReason string
+	// 审核结果，brig.Allow | brig.Deny
+	VerdictResult int
 }
 
 // ToolSource 工具来源
@@ -270,3 +278,13 @@ type ModelLimit struct {
 	Input   *int `json:"input,omitempty"`
 	Output  *int `json:"output,omitempty"`
 }
+
+type ToolVerdict string
+
+const (
+	VerdictAutoAllow   ToolVerdict = "auto_allow"   // 静态规则直接放行
+	VerdictAutoDeny    ToolVerdict = "auto_deny"    // 静态规则直接拒绝
+	VerdictCachedAllow ToolVerdict = "cached_allow" // 命中用户之前的审批记录自动放行
+	VerdictAskAllow    ToolVerdict = "ask_allow"    // 用户当场确认同意
+	VerdictAskDeny     ToolVerdict = "ask_deny"     // 用户当场拒绝
+)

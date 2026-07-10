@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"argo/src/brig"
 	"argo/src/knot"
 	"argo/src/wake"
 )
@@ -132,14 +133,25 @@ func main() {
 				showToolDone(ev)
 
 			case knot.EventAsk:
-				allow := askCLI(stdin, ev.ToolUse, ev.AskReason)
+				var tus []knot.ToolUse
+				for _, tu := range ev.AskingToolUses {
+					approve := askCLI(stdin, tu)
+					if approve {
+						tu.VerdictResult = brig.UserApprove
+					} else {
+						tu.VerdictResult = brig.UserDeny
+					}
+
+					tus = append(tus, tu)
+				}
+
 				clear(seenTools)
 
 				// Ask 后 server 端 goroutine 已退出、连接已关闭，
 				// 此处 cancel 确保客户端旧 body 资源释放，
 				// 然后通过 sendAskReply 发起新连接继续消费。
 				cancel()
-				events, cancel, err = client.sendAskReply(sessionID, ev.AskID, allow)
+				events, cancel, err = client.sendAskReply(sessionID, tus)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "❌ 回复失败: %v\n", err)
 					break eventLoop

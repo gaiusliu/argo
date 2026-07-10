@@ -6,7 +6,6 @@ import (
 
 	"argo/src/deck"
 	"argo/src/knot"
-	"argo/src/vault"
 	"argo/src/voyage"
 )
 
@@ -29,7 +28,7 @@ func Run(ctx context.Context, st *LoopState, session *voyage.Session, msgs *[]kn
 			// 设置当前用户问题的回答结果
 			i := st.ToolUseIndex
 			tu := &st.ToolUses[i]
-			v := vault.VerdictAskAllow
+			v := knot.VerdictAskAllow
 			if reply == knot.AskAllowed {
 				// 1. 用户允许 → 注册审批 + 执行工具
 				session.Guard.Approve(*tu)
@@ -52,7 +51,7 @@ func Run(ctx context.Context, st *LoopState, session *voyage.Session, msgs *[]kn
 				}
 			} else {
 				// 2. 用户拒绝/Default → 记录拒绝结果，跳过执行
-				v = vault.VerdictAskDeny
+				v = knot.VerdictAskDeny
 				tu.Result = knot.ToolResult{Status: knot.StatusError, Output: "user rejected: " + st.AskReason}
 			}
 			emit(knot.Event{Type: knot.EventToolUseDone, ToolUse: *tu})

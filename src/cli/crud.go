@@ -4,9 +4,9 @@ import "argo/src/server"
 
 // createSession 发送创建会话请求，返回 sessionID。
 func (c *argoClient) createSession(cwd string) (string, error) {
-	var resp server.CreateSessionResponse
-	req := server.CreateSessionRequest{CWD: cwd}
-	if err := c.postJSON("/session/create", req, &resp); err != nil {
+	var resp server.NewSessionResponse
+	req := server.NewSessionRequest{CWD: cwd}
+	if err := c.postJSON("/session/new", req, &resp); err != nil {
 		return "", err
 	}
 	return resp.SessionID, nil

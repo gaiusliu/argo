@@ -20,13 +20,13 @@ const (
 
 // askCLI 通过 stdin 询问用户是否允许工具执行，返回是否允许。
 // 对 write/edit 工具额外展示彩色 diff 变更预览。
-func askCLI(stdin *bufio.Reader, tu knot.ToolUse, reason string) bool {
+func askCLI(stdin *bufio.Reader, tu knot.ToolUse) bool {
 	switch tu.Name {
 	case "write", "edit":
 		showDiff(tu)
 	}
 
-	fmt.Fprintf(os.Stderr, "\n⚠️  %s\n", reason)
+	fmt.Fprintf(os.Stderr, "\n⚠️  %s\n", tu.VerdictReason)
 	fmt.Fprintf(os.Stderr, "   工具: %s, 参数: %s\n", tu.Name, knot.GetRawParam(tu))
 	fmt.Fprintf(os.Stderr, "   执行? [y/N]: ")
 	answer, _ := stdin.ReadString('\n')

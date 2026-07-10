@@ -25,7 +25,7 @@ func buildSystemPrompt(tools []knot.Tool) string {
 	sb.WriteString("\n\n")
 
 	// 2. 环境信息（session 级不变项）
-	argoDir := ArgoDir()
+	argoDir := knot.ArgoDir()
 	sb.WriteString("<env>\n")
 	fmt.Fprintf(&sb, "  Platform: %s\n", runtime.GOOS)
 	fmt.Fprintf(&sb, "  Today's date: %s\n", time.Now().Format("2006-01-02"))

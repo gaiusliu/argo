@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"argo/src/helm"
+	"argo/src/knot"
 	"argo/src/voyage"
 
 	"github.com/go-chi/chi/v5"
@@ -14,8 +14,8 @@ import (
 // Server Argo HTTP 后端，无状态路由分发。
 // 每次请求自行从磁盘加载状态，结束后持久化。
 type Server struct {
-	// baseDir Argo 全局配置目录，通常为 ~/.argo/。
-	baseDir string
+	// argoDir Argo 全局配置目录，通常为 ~/.argo/。
+	argoDir string
 	// addr HTTP 监听地址，例如 :4090。
 	addr string
 	// certFile TLS 证书文件路径，空字符串表示不启用 HTTPS。
@@ -41,7 +41,7 @@ type Config struct {
 // New 创建 Server 实例，注册 chi 路由。
 func New(cfg Config) *Server {
 	s := &Server{
-		baseDir:  helm.ArgoDir(),
+		argoDir:  knot.ArgoDir(),
 		addr:     cfg.Addr,
 		certFile: cfg.CertFile,
 		keyFile:  cfg.KeyFile,
@@ -50,8 +50,8 @@ func New(cfg Config) *Server {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer) // panic 兜底
 
-	r.Post("/session/create", s.handleCreateSession)
-	r.Post("/session/prompt", s.handlePrompt)
+	r.Post("/session/new", s.handleNewSession)
+	r.Post("/session/prompt", s.handlePromptNew)
 	r.Post("/session/resume", s.handleResumeSession)
 	r.Get("/session/list", s.handleListSessions)
 	r.Post("/session/delete", s.handleDeleteSession)
@@ -71,25 +71,25 @@ func (s *Server) ListenAndServe() error {
 // ---- Session CRUD handlers ----
 
 // handleCreateSession 创建新 session 目录并返回 sessionID。
-func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
-	var body CreateSessionRequest
+func (s *Server) handleNewSession(w http.ResponseWriter, r *http.Request) {
+	var body NewSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 
-	session, err := voyage.CreateSession(s.baseDir, body.CWD)
+	session, err := voyage.NewSession(s.argoDir, body.CWD)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	respondJSON(w, http.StatusOK, CreateSessionResponse{SessionID: session.ID})
+	respondJSON(w, http.StatusOK, NewSessionResponse{SessionID: session.ID()})
 }
 
 // handleListSessions 列出所有已持久化的 session。
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	sessions, err := voyage.ListSessions(s.baseDir)
+	sessions, err := voyage.ListSessions(knot.ArgoDir())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -110,7 +110,7 @@ func (s *Server) handleResumeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := voyage.ResumeSession(s.baseDir, body.SessionID)
+	session, err := voyage.ResumeSession(knot.ArgoDir(), body.SessionID)
 	if err != nil {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
@@ -127,7 +127,7 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := voyage.DeleteSession(s.baseDir, body.SessionID); err != nil {
+	if err := voyage.DeleteSession(knot.ArgoDir(), body.SessionID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
