@@ -6,3 +6,6 @@ logs/
 
 # Go
 *.exe
+
+# claude code settings backup
+settings-backup.json

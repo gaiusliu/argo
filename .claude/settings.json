@@ -32,7 +32,26 @@
       "Read(//tmp/**)",
       "Read(//c/tmp/**)",
       "Bash(grep '\"type\":\"system\"' ~/.claude/projects/c--Users-Gaiusliu-Desktop-code-argo/0cc8b6f6-5aa0-495d-9da4-c77758158e1b.jsonl | grep -o '\"subtype\":\"[^\"]*\"' | sort | uniq -c)",
-      "Read(//c/Users/Gaiusliu/.claude/projects/c--Users-Gaiusliu-Desktop-code-argo/**)"
+      "Read(//c/Users/Gaiusliu/.claude/projects/c--Users-Gaiusliu-Desktop-code-argo/**)",
+      "Bash(git restore *)",
+      "Bash(rm -rf src/helm/phase_runner_llm.go src/helm/run_new.go src/state-machine/)",
+      "Bash(gofmt -w src/)",
+      "Bash(git rm *)",
+      "Skill(code-review)",
+      "Skill(code-review:*)",
+      "Skill(simplify)",
+      "Skill(simplify:*)",
+      "mcp__codegraph__codegraph_explore",
+      "mcp__codegraph__codegraph_files",
+      "Bash(ls -la \"C:/Users/Gaiusliu/.argo/sessions/sess_1783753066088_16cf2fa94e11396b/\")",
+      "Read(//c/Users/Gaiusliu/.argo/sessions/sess_1783753066088_16cf2fa94e11396b/**)",
+      "Bash(git push *)",
+      "Bash(cd c:/Users/Gaiusliu/Desktop/code/argo && rm src/server/prompt.go src/server/state.go src/helm/run.go src/helm/phase_llm.go src/helm/state_machine.go src/helm/phase_execute_tools.go)",
+      "Bash(gofmt -w src/helm/run.go src/helm/phase_model.go src/server/prompt.go src/server/event_json.go src/server/sse.go src/server/server.go src/vault/convert.go src/voyage/voyage.go src/cli/sse.go src/cli/convert.go)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\Gaiusliu\\Desktop\\code\\argo\\src\\helm",
+      "c:\\Users\\Gaiusliu\\Desktop\\code\\argo\\src\\server"
     ]
   }
 }

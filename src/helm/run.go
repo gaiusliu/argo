@@ -7,7 +7,7 @@ import (
 )
 
 func Run(ctx context.Context, st *HelmState, session voyage.Voyage) <-chan knot.Event {
-	out := newEventChannel()
+	out := make(chan knot.Event, 16)
 
 	go func() {
 		defer close(out)
