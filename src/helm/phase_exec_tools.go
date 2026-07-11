@@ -12,10 +12,6 @@ import (
 type PhaseRunnerExecTools struct {
 }
 
-func NewPhaseRunnerExecTools() *PhaseRunnerExecTools {
-	return &PhaseRunnerExecTools{}
-}
-
 func (pr *PhaseRunnerExecTools) Run(ctx context.Context, st *HelmState, emit func(knot.Event), session voyage.Voyage) {
 	slog.Info("phase exec tools", "session id", session.ID(), "helm state", st)
 

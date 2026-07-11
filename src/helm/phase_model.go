@@ -14,10 +14,6 @@ import (
 	"strings"
 )
 
-type PhaseRunner interface {
-	Run(ctx context.Context, st *HelmState, emit func(knot.Event), session *voyage.Session)
-}
-
 type PhaseRunnerModel struct {
 	Model        string
 	Provider     string

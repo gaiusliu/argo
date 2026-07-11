@@ -12,29 +12,15 @@ func RunNew(ctx context.Context, st *HelmState, session voyage.Voyage) <-chan kn
 	go func() {
 		defer close(out)
 		emit := func(ev knot.Event) { out <- ev }
-		phase := st.Phase
 		for {
-			if phase == HelmPhaseModel {
-				pr := NewPhaseRunnerModel()
-				pr.Run(ctx, st, emit, session)
-			} else if phase == HelmPhaseExecTools {
-				pr := NewPhaseRunnerExecTools()
-				pr.Run(ctx, st, emit, session)
-			} else if phase == HelmPhaseAsking {
-				pr := NewPhaseRunnerAsking()
-				pr.Run(ctx, st, emit, session)
-				// 此时需返回，等待客户端审批结果
-				return
-			} else {
-				// phase done
-				pr := NewPhaseRunnerDone()
-				pr.Run(ctx, st, emit, session)
+			pr := newRunner(st.Phase)
+			pr.Run(ctx, st, emit, session)
+
+			// Asking 或 Done 是断点，goroutine 退出等待外部驱动
+			if st.Phase == HelmPhaseAsking || st.Phase == HelmPhaseDone {
 				return
 			}
-
-			phase = st.Phase
 		}
-
 	}()
 
 	return out

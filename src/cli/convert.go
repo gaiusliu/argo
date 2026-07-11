@@ -7,7 +7,7 @@ import (
 	"argo/src/server"
 )
 
-// toKnotEvent 将 server.EventJSON 转回 knot.Event。
+// toKnotEvent 将 server.EventJSONNew 转回 knot.Event。
 func toKnotEvent(ej server.EventJSONNew) knot.Event {
 	ev := knot.Event{
 		Type:  knot.EventType(ej.Type),
@@ -63,16 +63,4 @@ func toKnotEvent(ej server.EventJSONNew) knot.Event {
 		}
 	}
 	return ev
-}
-
-// parseStatus 将 SSE 中的状态字符串转回 knot.ResultStatus。
-func parseStatus(s string) knot.ResultStatus {
-	switch s {
-	case "success":
-		return knot.StatusSuccess
-	case "error":
-		return knot.StatusError
-	default:
-		return knot.StatusDefault
-	}
 }
