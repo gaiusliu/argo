@@ -7,8 +7,8 @@ import (
 	"argo/src/server"
 )
 
-// toKnotEvent 将 server.EventJSONNew 转回 knot.Event。
-func toKnotEvent(ej server.EventJSONNew) knot.Event {
+// toKnotEvent 将 server.EventJSON 转回 knot.Event。
+func toKnotEvent(ej server.EventJSON) knot.Event {
 	ev := knot.Event{
 		Type:  knot.EventType(ej.Type),
 		Delta: ej.Delta,
@@ -36,8 +36,8 @@ func toKnotEvent(ej server.EventJSONNew) knot.Event {
 	return ev
 }
 
-// toolUseFromJSON 将 server.ToolUseJSONNew 转为 knot.ToolUse。
-func toolUseFromJSON(tu server.ToolUseJSONNew) knot.ToolUse {
+// toolUseFromJSON 将 server.ToolUseJSON 转为 knot.ToolUse。
+func toolUseFromJSON(tu server.ToolUseJSON) knot.ToolUse {
 	return knot.ToolUse{
 		ID:            tu.ID,
 		Name:          tu.Name,

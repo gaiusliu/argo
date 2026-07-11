@@ -2,17 +2,17 @@ package server
 
 import "argo/src/knot"
 
-type EventJSONNew struct {
-	Type           string           `json:"type"`
-	Delta          string           `json:"delta,omitempty"`
-	ToolUse        *ToolUseJSONNew  `json:"toolUse,omitempty"`
-	Usage          *UsageJSON       `json:"usage,omitempty"`
-	DeniedToolUses []ToolUseJSONNew `json:"deniedToolUses,omitempty"`
-	AskingToolUses []ToolUseJSONNew `json:"askingToolUses,omitempty"`
-	Err            string           `json:"error,omitempty"`
+type EventJSON struct {
+	Type           string        `json:"type"`
+	Delta          string        `json:"delta,omitempty"`
+	ToolUse        *ToolUseJSON  `json:"toolUse,omitempty"`
+	Usage          *UsageJSON    `json:"usage,omitempty"`
+	DeniedToolUses []ToolUseJSON `json:"deniedToolUses,omitempty"`
+	AskingToolUses []ToolUseJSON `json:"askingToolUses,omitempty"`
+	Err            string        `json:"error,omitempty"`
 }
 
-type ToolUseJSONNew struct {
+type ToolUseJSON struct {
 	ID            string         `json:"id"`
 	Name          string         `json:"name"`
 	Parameters    map[string]any `json:"parameters"`
@@ -27,8 +27,8 @@ type UsageJSON struct {
 	Output int `json:"output"`
 }
 
-func ToEventJSONNew(ev knot.Event) EventJSONNew {
-	e := EventJSONNew{
+func ToEventJSON(ev knot.Event) EventJSON {
+	e := EventJSON{
 		Type:           string(ev.Type),
 		Delta:          ev.Delta,
 		DeniedToolUses: toolUsesToJSON(ev.DeniedToolUses),
@@ -38,7 +38,7 @@ func ToEventJSONNew(ev knot.Event) EventJSONNew {
 		e.Err = ev.Err.Error()
 	}
 	if ev.ToolUse.ID != "" {
-		e.ToolUse = &ToolUseJSONNew{
+		e.ToolUse = &ToolUseJSON{
 			ID:         ev.ToolUse.ID,
 			Name:       ev.ToolUse.Name,
 			Parameters: ev.ToolUse.Parameters,
@@ -54,14 +54,14 @@ func ToEventJSONNew(ev knot.Event) EventJSONNew {
 	return e
 }
 
-// toolUsesToJSON 将 []knot.ToolUse 转为可序列化的 []ToolUseJSONNew
-func toolUsesToJSON(tus []knot.ToolUse) []ToolUseJSONNew {
+// toolUsesToJSON 将 []knot.ToolUse 转为可序列化的 []ToolUseJSON
+func toolUsesToJSON(tus []knot.ToolUse) []ToolUseJSON {
 	if len(tus) == 0 {
 		return nil
 	}
-	result := make([]ToolUseJSONNew, len(tus))
+	result := make([]ToolUseJSON, len(tus))
 	for i, tu := range tus {
-		tj := ToolUseJSONNew{
+		tj := ToolUseJSON{
 			ID:            tu.ID,
 			Name:          tu.Name,
 			Parameters:    tu.Parameters,
@@ -76,4 +76,3 @@ func toolUsesToJSON(tus []knot.ToolUse) []ToolUseJSONNew {
 	}
 	return result
 }
-

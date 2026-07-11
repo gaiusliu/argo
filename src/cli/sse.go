@@ -43,7 +43,7 @@ func (c *argoClient) streamEvents(path string, body any) (<-chan knot.Event, fun
 			if !strings.HasPrefix(line, "data: ") {
 				continue
 			}
-			var ej server.EventJSONNew
+			var ej server.EventJSON
 			if err := json.Unmarshal([]byte(line[6:]), &ej); err != nil {
 				continue
 			}

@@ -178,12 +178,7 @@ func (s *Session) WorkingDir() string {
 }
 
 // SaveApprovals 持久化 Guard 中的用户审批记录到 session 目录。
-func SaveApprovals(s *Session) error {
-	return saveApprovals(sessionDir(knot.ArgoDir(), s.ID()), s.Guard.Snapshot())
-}
-
-// SaveApprovals 持久化 Guard 中的用户审批记录到 session 目录。
-func SaveApprovalsNew(v Voyage) error {
+func SaveApprovals(v Voyage) error {
 	return saveApprovals(sessionDir(knot.ArgoDir(), v.ID()), v.UserApprovals())
 }
 

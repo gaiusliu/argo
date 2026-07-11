@@ -12,7 +12,7 @@ import (
 )
 
 // handlePrompt 状态机统一入口。当 AskID 为空时处理新消息，非空时处理 EventAsk 回复。
-func (s *Server) handlePromptNew(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	var req NewPromptRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -67,12 +67,12 @@ func (s *Server) handlePromptNew(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	events := helm.RunNew(ctx, st, session)
-	streamAndSaveNew(w, events)
+	events := helm.Run(ctx, st, session)
+	streamAndSave(w, events)
 }
 
 // streamAndSave SSE 转发所有事件，不做持久化（持久化由状态机 checkpoint 负责）。
-func streamAndSaveNew(w http.ResponseWriter, events <-chan knot.Event) {
+func streamAndSave(w http.ResponseWriter, events <-chan knot.Event) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)

@@ -6,7 +6,7 @@ import (
 	"context"
 )
 
-func RunNew(ctx context.Context, st *HelmState, session voyage.Voyage) <-chan knot.Event {
+func Run(ctx context.Context, st *HelmState, session voyage.Voyage) <-chan knot.Event {
 	out := newEventChannel()
 
 	go func() {

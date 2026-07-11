@@ -52,7 +52,7 @@ func New(cfg Config) *Server {
 	r.Use(middleware.Recoverer) // panic 兜底
 
 	r.Post("/session/new", s.handleNewSession)
-	r.Post("/session/prompt", s.handlePromptNew)
+	r.Post("/session/prompt", s.handlePrompt)
 	r.Post("/session/resume", s.handleResumeSession)
 	r.Get("/session/list", s.handleListSessions)
 	r.Post("/session/delete", s.handleDeleteSession)

@@ -166,7 +166,7 @@ func checkpoint(session voyage.Voyage, st *HelmState) {
 		for _, tu := range st.ToolUses {
 			toolUsesByIDs[tu.ID] = tu
 		}
-		records := vault.MessagesToRecordsNew(delta, toolUsesByIDs, st.Model)
+		records := vault.MessagesToRecords(delta, toolUsesByIDs, st.Model)
 		if err := session.Append(records); err != nil {
 			slog.Error("vault 写入失败", "error", err)
 			return
@@ -176,7 +176,7 @@ func checkpoint(session voyage.Voyage, st *HelmState) {
 	}
 
 	// 持久化审批记录
-	if err := voyage.SaveApprovalsNew(session); err != nil {
+	if err := voyage.SaveApprovals(session); err != nil {
 		slog.Error("保存审批记录失败", "error", err)
 	}
 }

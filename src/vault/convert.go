@@ -12,24 +12,7 @@ type ToolRecordMeta struct {
 	Status  string           // "success" / "error"
 }
 
-// MessagesToRecords 将本轮新增消息转为 Record 列表。
-// toolMeta 的 key 为 tool_call_id，由 RunLoop 在执行阶段收集。
-func MessagesToRecords(msgs []knot.Message, toolMeta map[string]ToolRecordMeta, modelName string) []Record {
-	records := make([]Record, 0, len(msgs))
-	for _, msg := range msgs {
-		switch msg.Role {
-		case knot.MessageRoleUser:
-			records = append(records, Record{Type: RecordUser, Content: msg.Content})
-		case knot.MessageRoleAssistant:
-			records = append(records, llmRecord(msg, modelName))
-		case knot.MessageRoleTool:
-			records = append(records, toolRecord(msg, knot.ToolUse{}))
-		}
-	}
-	return records
-}
-
-func MessagesToRecordsNew(msgs []knot.Message, toolUsesByIDs map[string]knot.ToolUse, modelName string) []Record {
+func MessagesToRecords(msgs []knot.Message, toolUsesByIDs map[string]knot.ToolUse, modelName string) []Record {
 	records := make([]Record, 0, len(msgs))
 	for _, msg := range msgs {
 		switch msg.Role {
