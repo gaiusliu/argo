@@ -278,5 +278,5 @@ func SaveApprovals(s *Session) error
 
 ## 小 TODO
 
-- [ ] **跨平台 server 二进制名适配**（`src/cli/server.go`）：当前硬编码 `argo-server.exe`，macOS/Linux 下二进制名为 `argo-server`（无 `.exe`）。需在 `startServer` 中按 `runtime.GOOS` 拼接正确的可执行文件名。
-- [ ] **Vault 成为对话历史与状态的唯一数据源**（`src/helm/` + `src/server/prompt.go`）：当前 `LoopState.Messages` 和 `transcript.jsonl` 双写同一份对话历史。改造方案：① `LoopState` 去掉 `Messages`、`MsgCount`、`ToolMeta`、`Usage`、`AskReply`，只存控制流字段（`Phase`、`ToolUses`、`ToolUseIndex`、`AskID` 等）；② 各 Phase 通过 `Vault.Load()` 读取 `[]Message`，通过 `vault.Append()` 写入增量记录；③ `runPhaseExecuteTools` 每条工具执行完立刻 Append，而非批量；④ `handlePrompt` Ask 回复路径同样走 Vault.Load() 重建 Messages，不再依赖 `st.Messages`。收益：消除双写不一致风险，state.json 瘦身，崩溃恢复更可靠。涉及文件：`state_machine.go`、`phase_llm.go`、`phase_execute_tools.go`、`run.go`、`prompt.go`。
+- [x] ~~跨平台 server 二进制名适配~~（`src/cli/server.go`）：默认 `argo-server`，仅在同目录存在 `.exe` 时使用，已兼容全平台。
+- [x] ~~Vault 成为对话历史与状态的唯一数据源~~：已在 009-vault-single-source 中完成——Messages `json:"-"`、Saved 游标增量写入、handlePrompt 按分支读 transcript。
