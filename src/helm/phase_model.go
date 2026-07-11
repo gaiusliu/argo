@@ -161,23 +161,26 @@ func (pr *PhaseRunnerModel) isOpenAI() bool {
 	return pr.Provider == "openai"
 }
 
-func writeRecordsNew(session voyage.Voyage, st *HelmState) {
-	// 只取本轮增量：Messages[:Saved] 已在 transcript 中，写 Messages[Saved:]
+// checkpoint 断点持久化——状态机在 Asking / Done 两个终点调用，将本轮状态快照落盘。
+func checkpoint(session voyage.Voyage, st *HelmState) {
+	// 增量消息写入 transcript
 	delta := st.Messages[st.Saved:]
-	if len(delta) == 0 {
-		return
+	if len(delta) > 0 {
+		toolUsesByIDs := make(map[string]knot.ToolUse)
+		for _, tu := range st.ToolUses {
+			toolUsesByIDs[tu.ID] = tu
+		}
+		records := vault.MessagesToRecordsNew(delta, toolUsesByIDs, st.Model)
+		if err := session.Append(records); err != nil {
+			slog.Error("vault 写入失败", "error", err)
+			return
+		}
+		st.Saved = len(st.Messages)
+		slog.Info("transcript 增量写入成功", "delta", len(delta), "saved", st.Saved)
 	}
 
-	toolUsesByIDs := make(map[string]knot.ToolUse)
-	for _, tu := range st.ToolUses {
-		toolUsesByIDs[tu.ID] = tu
+	// 持久化审批记录
+	if err := voyage.SaveApprovalsNew(session); err != nil {
+		slog.Error("保存审批记录失败", "error", err)
 	}
-	records := vault.MessagesToRecordsNew(delta, toolUsesByIDs, st.Model)
-	if err := session.Append(records); err != nil {
-		slog.Error("vault 写入失败", "error", err)
-		return
-	}
-	// 写入成功，更新游标
-	st.Saved = len(st.Messages)
-	slog.Info("writing records success", "delta", len(delta), "saved", st.Saved)
 }

@@ -73,7 +73,7 @@ func (s *Server) handlePromptNew(w http.ResponseWriter, r *http.Request) {
 	streamAndSaveNew(w, events, session)
 }
 
-// streamAndSave SSE 转发所有事件。通道关闭后持久化审批记录。
+// streamAndSave SSE 转发所有事件，不做持久化（持久化由状态机 checkpoint 负责）。
 func streamAndSaveNew(w http.ResponseWriter, events <-chan knot.Event, session voyage.Voyage) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -92,10 +92,5 @@ func streamAndSaveNew(w http.ResponseWriter, events <-chan knot.Event, session v
 			return
 		}
 		flusher.Flush()
-	}
-
-	// 通道关闭，持久化审批记录
-	if err := voyage.SaveApprovalsNew(session); err != nil {
-		slog.Error("保存审批记录失败", "error", err)
 	}
 }
