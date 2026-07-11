@@ -36,9 +36,9 @@ func (s *Server) handlePromptNew(w http.ResponseWriter, r *http.Request) {
 	// 生成新的状态机状态，从phase model开始
 	st := helm.NewHelmState(req.Model, msgs)
 
-	slog.Info("helm state initialized", "state", st)
 	if len(req.ToolUseVerdicts) > 0 {
 		// 恢复helm state状态, phase会变更为exec tools
+		// Messages 由 transcript 提供（json:"-"，不被 state.json 覆盖）
 		err := st.Load(session.ID())
 		if err != nil {
 			http.Error(w, "failed to load helm state: "+err.Error(), http.StatusInternalServerError)
@@ -58,21 +58,23 @@ func (s *Server) handlePromptNew(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
-		// 新消息路径：追加 user 消息到 vault + 对话历史
+		// 新消息路径：追加 user 消息到对话历史
+		// Saved 初始化为 transcript 已有条数，作为增量写入的起始游标
+		st.Saved = len(msgs)
 		userMsg := knot.Message{Role: knot.MessageRoleUser, Content: req.Message}
 		st.Messages = append(st.Messages, userMsg)
-		slog.Info("new user message", "msg", userMsg)
+		slog.Info("new user message", "msg", userMsg, "saved", st.Saved)
 	}
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
 	events := helm.RunNew(ctx, st, session)
-	streamAndSaveNew(w, events, st, session)
+	streamAndSaveNew(w, events, session)
 }
 
-// streamAndSave SSE 转发所有事件。通道关闭后持久化 LoopState 和审批记录。
-func streamAndSaveNew(w http.ResponseWriter, events <-chan knot.Event, st *helm.HelmState, session voyage.Voyage) {
+// streamAndSave SSE 转发所有事件。通道关闭后持久化审批记录。
+func streamAndSaveNew(w http.ResponseWriter, events <-chan knot.Event, session voyage.Voyage) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
@@ -92,13 +94,7 @@ func streamAndSaveNew(w http.ResponseWriter, events <-chan knot.Event, st *helm.
 		flusher.Flush()
 	}
 
-	// 通道关闭，持久化控制流状态和审批记录
-	if st.Phase == helm.HelmPhaseAsking {
-		if err := st.Save(session.ID()); err != nil {
-			slog.Error("保存 helm state 失败", "error", err)
-		}
-	}
-
+	// 通道关闭，持久化审批记录
 	if err := voyage.SaveApprovalsNew(session); err != nil {
 		slog.Error("保存审批记录失败", "error", err)
 	}

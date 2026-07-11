@@ -162,13 +162,22 @@ func (pr *PhaseRunnerModel) isOpenAI() bool {
 }
 
 func writeRecordsNew(session voyage.Voyage, st *HelmState) {
+	// 只取本轮增量：Messages[:Saved] 已在 transcript 中，写 Messages[Saved:]
+	delta := st.Messages[st.Saved:]
+	if len(delta) == 0 {
+		return
+	}
+
 	toolUsesByIDs := make(map[string]knot.ToolUse)
 	for _, tu := range st.ToolUses {
 		toolUsesByIDs[tu.ID] = tu
 	}
-	records := vault.MessagesToRecordsNew(st.Messages, toolUsesByIDs, st.Model)
+	records := vault.MessagesToRecordsNew(delta, toolUsesByIDs, st.Model)
 	if err := session.Append(records); err != nil {
 		slog.Error("vault 写入失败", "error", err)
+		return
 	}
-	slog.Info("writing records success", "records", records)
+	// 写入成功，更新游标
+	st.Saved = len(st.Messages)
+	slog.Info("writing records success", "delta", len(delta), "saved", st.Saved)
 }

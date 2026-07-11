@@ -19,14 +19,17 @@ type HelmState struct {
 	// 当前处于哪个环节
 	// HelmPhaseModel | HelmPhaseExecTools | HelmPhaseAsking | HelmPhaseDone
 	Phase int
-	// 系统消息
-	SystemPrompt knot.Message
-	// 消息列表
-	Messages []knot.Message
 	// 当前的模型
 	Model string
-	// 记录待执行的tool call
+	// 记录待执行的 tool call（含 verdict/result）
 	ToolUses []knot.ToolUse
+	// Saved 是已持久化到 transcript.jsonl 的消息条数，也即 Messages 的游标：
+	//   Messages[:Saved]  — 已在 transcript 中
+	//   Messages[Saved:]  — 本轮新增、尚未持久化
+	// PhaseDone 时以该游标做增量写入，写入成功后更新 Saved。
+	Saved int `json:"saved"`
+	// 完整对话历史，不持久化到 state.json（transcript.jsonl 是唯一持久化来源）
+	Messages []knot.Message `json:"-"`
 }
 
 func NewHelmState(model string, messages []knot.Message) *HelmState {
