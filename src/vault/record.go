@@ -6,9 +6,9 @@ import (
 
 // transcript record 类型常量。
 const (
-	RecordUser string = "user"
-	RecordLLM  string = "llm"
-	RecordTool string = "tool"
+	RecordUser  string = "user"
+	RecordModel string = "model"
+	RecordTool  string = "tool"
 )
 
 // ToolVerdict 工具调用的审批结果。
@@ -23,13 +23,13 @@ type Record struct {
 	// user
 	Content string `json:"content,omitempty"` // 用户输入原文
 
-	// llm
+	// model
 	Model     string           `json:"model,omitempty"`      // 模型名
 	ToolCalls []ToolCallRecord `json:"tool_calls,omitempty"` // 工具调用请求
 
 	// tool
 	Verdict    int    `json:"verdict,omitempty"`      // 审批结果
-	ToolCallID string `json:"tool_call_id,omitempty"` // 关联 llm.tool_calls
+	ToolCallID string `json:"tool_call_id,omitempty"` // 关联 model.tool_calls
 	Name       string `json:"name,omitempty"`         // 工具名
 	Status     string `json:"status,omitempty"`       // success / error
 }

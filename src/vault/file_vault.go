@@ -93,8 +93,8 @@ func recordsToMessages(records []Record) []knot.Message {
 				Role:    knot.MessageRoleUser,
 				Content: r.Content,
 			})
-		case RecordLLM:
-			msgs = append(msgs, llmRecordToMessage(r))
+		case RecordModel:
+			msgs = append(msgs, modelRecordToMessage(r))
 		case RecordTool:
 			msgs = append(msgs, knot.Message{
 				Role:       knot.MessageRoleTool,
@@ -106,7 +106,7 @@ func recordsToMessages(records []Record) []knot.Message {
 	return msgs
 }
 
-func llmRecordToMessage(r Record) knot.Message {
+func modelRecordToMessage(r Record) knot.Message {
 	var details []knot.ToolCall
 	for _, tc := range r.ToolCalls {
 		argsBytes, err := json.Marshal(tc.Args)

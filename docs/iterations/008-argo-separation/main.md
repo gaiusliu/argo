@@ -237,7 +237,7 @@ func SaveApprovals(s *Session) error
 | knot.Event 清理（AskReply 删除） | ✅ 完成 | `src/knot/types.go` |
 | sail 超时从 doChat 提升到 runPhaseLLM | ✅ 完成 | `src/sail/adapter.go`, `src/helm/phase_llm.go` |
 | CLI HTTP 客户端改造 | ✅ 完成 | `src/cli/`（client.go, crud.go, sse.go, convert.go, server.go, ui.go, session_pick.go, ask.go, main.go） |
-| 模块设计文档更新 | ⏳ 待开始 | 6 个 design.md |
+| 模块设计文档更新 | ✅ 完成 | helm、server、vault、voyage、brig、knot、sail、deck 8 个 design.md |
 
 ## 关键决策
 
@@ -270,6 +270,7 @@ func SaveApprovals(s *Session) error
 
 | 日期 | 变更 |
 |------|------|
+| 2026-07-12 | 模块设计文档全部更新完成（8 个 design.md） |
 | 2026-07-08 | vault 拆分为纯存储 + voyage 模块（Session 聚合 Vault + Engine）；TurnState 精简为纯对话状态 |
 | 2026-07-08 | 状态机重构完成：helm RunLoop → LoopState + Phase；brig Guard 接口化 + 审批持久化；server 无状态化 |
 | 2026-07-08 | CLI HTTP 客户端改造完成：8 个新文件，复用 server 包导出类型；自动启动/连接 argo-server；SSE 流解析 + EventAsk 桥接 |
@@ -277,5 +278,5 @@ func SaveApprovals(s *Session) error
 
 ## 小 TODO
 
-- [ ] **跨平台 server 二进制名适配**（`src/cli/server.go:23-28`）：当前硬编码 `argo-server.exe`，macOS/Linux 下二进制名为 `argo-server`（无 `.exe`）。需在 `startServer` 中按 `runtime.GOOS` 拼接正确的可执行文件名。
+- [ ] **跨平台 server 二进制名适配**（`src/cli/server.go`）：当前硬编码 `argo-server.exe`，macOS/Linux 下二进制名为 `argo-server`（无 `.exe`）。需在 `startServer` 中按 `runtime.GOOS` 拼接正确的可执行文件名。
 - [ ] **Vault 成为对话历史与状态的唯一数据源**（`src/helm/` + `src/server/prompt.go`）：当前 `LoopState.Messages` 和 `transcript.jsonl` 双写同一份对话历史。改造方案：① `LoopState` 去掉 `Messages`、`MsgCount`、`ToolMeta`、`Usage`、`AskReply`，只存控制流字段（`Phase`、`ToolUses`、`ToolUseIndex`、`AskID` 等）；② 各 Phase 通过 `Vault.Load()` 读取 `[]Message`，通过 `vault.Append()` 写入增量记录；③ `runPhaseExecuteTools` 每条工具执行完立刻 Append，而非批量；④ `handlePrompt` Ask 回复路径同样走 Vault.Load() 重建 Messages，不再依赖 `st.Messages`。收益：消除双写不一致风险，state.json 瘦身，崩溃恢复更可靠。涉及文件：`state_machine.go`、`phase_llm.go`、`phase_execute_tools.go`、`run.go`、`prompt.go`。

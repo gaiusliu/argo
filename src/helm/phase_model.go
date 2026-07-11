@@ -111,7 +111,7 @@ var openAIBaseURL = "https://api.openai.com/v1/chat/completions"
 func (pr *PhaseRunnerModel) getModelConfig() error {
 	cfg, err := knot.GetConfig()
 	if err != nil {
-		return fmt.Errorf("phase runner llm: %w", err)
+		return fmt.Errorf("phase model: %w", err)
 	}
 
 	// 模型名为空时使用配置默认值
@@ -128,16 +128,16 @@ func (pr *PhaseRunnerModel) getModelConfig() error {
 		}
 	}
 	if pName == "" {
-		return fmt.Errorf("phase runner llm: model %q not in any provider", pr.Model)
+		return fmt.Errorf("phase model: model %q not in any provider", pr.Model)
 	}
 
 	// 从环境变量读取 API Key
 	if len(pCfg.Env) == 0 {
-		return fmt.Errorf("phase runner llm: provider %q env not set", pName)
+		return fmt.Errorf("phase model: provider %q env not set", pName)
 	}
 	apiKey := os.Getenv(pCfg.Env[0])
 	if apiKey == "" {
-		return fmt.Errorf("phase runner llm: env %s empty", pCfg.Env[0])
+		return fmt.Errorf("phase model: env %s empty", pCfg.Env[0])
 	}
 
 	pr.APIKey = apiKey

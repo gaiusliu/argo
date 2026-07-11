@@ -1,7 +1,7 @@
 # 007：vault MVP
 
 **日期**：2026-07-07 ~
-**状态**：🚧 进行中
+**状态**：✅ 完成（Session CRUD 已迁至 voyage，见 DEC-037 / 008-argo-separation）
 **涉及模块**：vault（新建）、helm（集成待定）
 
 ## 目标
@@ -14,7 +14,7 @@
 
 - Vault 接口定义：Session CRUD + Transcript Append/Load + Recall + WriteProfile
 - FileVault 实现（文件系统后端：JSONL + Markdown）
-- Record 类型定义（user / llm / tool，3 种）
+- Record 类型定义（user / model / tool，3 种）
 - Message ↔ Record 单向转换（vault 内部，helm 不感知 Record 结构）
 - Session 管理（创建 / 列表 / 查看 / 删除）
 
@@ -41,13 +41,14 @@
 | 功能 | 状态 | 子文档 | 关联测试 |
 |------|------|--------|---------|
 | Vault 接口 + Record 类型定义 | ✅ 完成 | — | — |
-| FileVault 实现 | ⏳ 待开始 | — | — |
-| Session CRUD | ⏳ 待开始 | — | — |
-| Message ↔ Record 转换 | ⏳ 待开始 | — | — |
+| FileVault 实现 | ✅ 完成 | — | — |
+| Session CRUD | ✅ 完成（迁至 voyage） | — | — |
+| Message ↔ Record 转换 | ✅ 完成 | — | — |
 
 ## 变更记录
 
 | 日期 | 变更 |
 |------|------|
 | 2026-07-07 | Vault 接口 + Record 类型定义完成；新增 DEC-034（mkdir 目录锁） |
+| 2026-07-12 | RecordLLM → RecordModel（llm → model），迭代闭环 |
 | 2026-07-07 | 迭代开始 |

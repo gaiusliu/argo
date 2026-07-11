@@ -19,7 +19,7 @@ func MessagesToRecords(msgs []knot.Message, toolUsesByIDs map[string]knot.ToolUs
 		case knot.MessageRoleUser:
 			records = append(records, Record{Type: RecordUser, Content: msg.Content})
 		case knot.MessageRoleAssistant:
-			records = append(records, llmRecord(msg, modelName))
+			records = append(records, modelRecord(msg, modelName))
 		case knot.MessageRoleTool:
 			records = append(records, toolRecord(msg, toolUsesByIDs[msg.ToolCallID]))
 		}
@@ -27,8 +27,8 @@ func MessagesToRecords(msgs []knot.Message, toolUsesByIDs map[string]knot.ToolUs
 	return records
 }
 
-func llmRecord(msg knot.Message, modelName string) Record {
-	r := Record{Type: RecordLLM, Content: msg.Content, Model: modelName}
+func modelRecord(msg knot.Message, modelName string) Record {
+	r := Record{Type: RecordModel, Content: msg.Content, Model: modelName}
 	for _, tc := range msg.ToolCalls {
 		r.ToolCalls = append(r.ToolCalls, ToolCallRecord{
 			ToolCallID: tc.ID,
