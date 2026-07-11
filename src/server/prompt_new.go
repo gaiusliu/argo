@@ -33,12 +33,13 @@ func (s *Server) handlePromptNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 生成新的状态机状态，从PhaseLLM开始
+	// 生成新的状态机状态，从phase model开始
 	st := helm.NewHelmState(req.Model, msgs)
 
+	slog.Info("helm state initialized", "state", st)
 	if len(req.ToolUseVerdicts) > 0 {
-		// helm phase: wait ask, 需恢复helm state状态
-		err := st.Load(session.ID(), knot.ArgoDir())
+		// 恢复helm state状态, phase会变更为exec tools
+		err := st.Load(session.ID())
 		if err != nil {
 			http.Error(w, "failed to load helm state: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -59,7 +60,8 @@ func (s *Server) handlePromptNew(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// 新消息路径：追加 user 消息到 vault + 对话历史
 		userMsg := knot.Message{Role: knot.MessageRoleUser, Content: req.Message}
-		msgs = append(msgs, userMsg)
+		st.Messages = append(st.Messages, userMsg)
+		slog.Info("new user message", "msg", userMsg)
 	}
 
 	ctx, cancel := context.WithCancel(r.Context())
@@ -92,7 +94,7 @@ func streamAndSaveNew(w http.ResponseWriter, events <-chan knot.Event, st *helm.
 
 	// 通道关闭，持久化控制流状态和审批记录
 	if st.Phase == helm.HelmPhaseAsking {
-		if err := st.Save(session.ID(), knot.ArgoDir()); err != nil {
+		if err := st.Save(session.ID()); err != nil {
 			slog.Error("保存 helm state 失败", "error", err)
 		}
 	}

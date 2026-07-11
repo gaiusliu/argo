@@ -37,6 +37,7 @@ func NewPhaseRunnerModel() *PhaseRunnerModel {
 }
 
 func (pr *PhaseRunnerModel) Run(ctx context.Context, st *HelmState, emit func(knot.Event), session voyage.Voyage) {
+	slog.Info("phase model", "session id", session.ID(), "helm state", st)
 	pr.Model = st.Model
 	pr.getModelConfig()
 	if st.Model != pr.Model {
@@ -65,7 +66,6 @@ func (pr *PhaseRunnerModel) Run(ctx context.Context, st *HelmState, emit func(kn
 		} else if evt.Type == knot.EventError {
 			emit(evt)
 			st.Phase = HelmPhaseDone
-			writeRecordsNew(session, st)
 			return
 		}
 
@@ -74,13 +74,14 @@ func (pr *PhaseRunnerModel) Run(ctx context.Context, st *HelmState, emit func(kn
 
 	// 无工具调用
 	if len(toolUses) == 0 {
-		st.Messages = append(st.Messages, knot.Message{
+		newMsg := knot.Message{
 			Role:    knot.MessageRoleAssistant,
 			Content: textBuf.String(),
-		})
+		}
+		st.Messages = append(st.Messages, newMsg)
+		slog.Info("new message generated", "msg", newMsg)
 
 		st.Phase = HelmPhaseDone
-		writeRecordsNew(session, st)
 		return
 	}
 
@@ -95,11 +96,14 @@ func (pr *PhaseRunnerModel) Run(ctx context.Context, st *HelmState, emit func(kn
 		}
 		toolCalls[i] = knot.ToolCall{ID: tu.ID, Name: tu.Name, Arguments: string(argsBytes)}
 	}
-	st.Messages = append(st.Messages, knot.Message{
+
+	newMsg := knot.Message{
 		Role:      knot.MessageRoleAssistant,
 		Content:   textBuf.String(),
 		ToolCalls: toolCalls,
-	})
+	}
+	st.Messages = append(st.Messages, newMsg)
+	slog.Info("new message generated", "msg", newMsg)
 
 	// exec tools阶段需要执行/审批的工具使用列表
 	st.ToolUses = toolUses
@@ -166,4 +170,5 @@ func writeRecordsNew(session voyage.Voyage, st *HelmState) {
 	if err := session.Append(records); err != nil {
 		slog.Error("vault 写入失败", "error", err)
 	}
+	slog.Info("writing records success", "records", records)
 }

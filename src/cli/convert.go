@@ -8,16 +8,43 @@ import (
 )
 
 // toKnotEvent 将 server.EventJSON 转回 knot.Event。
-func toKnotEvent(ej server.EventJSON) knot.Event {
+func toKnotEvent(ej server.EventJSONNew) knot.Event {
 	ev := knot.Event{
 		Type:  knot.EventType(ej.Type),
 		Delta: ej.Delta,
-		// AskReason: ej.AskReason,
-		// AskID:     ej.AskID,
 	}
 	if ej.Err != "" {
 		ev.Err = errors.New(ej.Err)
 	}
+
+	for _, tu := range ej.AskingToolUses {
+		ev.AskingToolUses = append(ev.AskingToolUses, knot.ToolUse{
+			ID:            tu.ID,
+			Name:          tu.Name,
+			Parameters:    tu.Parameters,
+			VerdictReason: tu.VerdictReason,
+			VerdictResult: tu.VerdictResult,
+			Result: knot.ToolResult{
+				Output: tu.Output,
+				Status: knot.ResultStatus(tu.Status),
+			},
+		})
+	}
+
+	for _, tu := range ej.DeniedToolUses {
+		ev.DeniedToolUses = append(ev.DeniedToolUses, knot.ToolUse{
+			ID:            tu.ID,
+			Name:          tu.Name,
+			Parameters:    tu.Parameters,
+			VerdictReason: tu.VerdictReason,
+			VerdictResult: tu.VerdictResult,
+			Result: knot.ToolResult{
+				Output: tu.Output,
+				Status: knot.ResultStatus(tu.Status),
+			},
+		})
+	}
+
 	if ej.ToolUse != nil {
 		ev.ToolUse = knot.ToolUse{
 			ID:         ej.ToolUse.ID,
@@ -25,7 +52,7 @@ func toKnotEvent(ej server.EventJSON) knot.Event {
 			Parameters: ej.ToolUse.Parameters,
 			Result: knot.ToolResult{
 				Output: ej.ToolUse.Output,
-				Status: parseStatus(ej.ToolUse.Status),
+				Status: knot.ResultStatus(ej.ToolUse.Status),
 			},
 		}
 	}

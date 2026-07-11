@@ -37,16 +37,16 @@ func NewHelmState(model string, messages []knot.Message) *HelmState {
 	}
 }
 
-func (st *HelmState) Save(sessionID, argoDir string) error {
+func (st *HelmState) Save(sessionID string) error {
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(statePath(argoDir, sessionID), data, 0644)
+	return os.WriteFile(statePath(knot.ArgoDir(), sessionID), data, 0644)
 }
 
-func (st *HelmState) Load(sessionID, argoDir string) error {
-	data, err := os.ReadFile(statePath(argoDir, sessionID))
+func (st *HelmState) Load(sessionID string) error {
+	data, err := os.ReadFile(statePath(knot.ArgoDir(), sessionID))
 	if err != nil {
 		return err
 	}

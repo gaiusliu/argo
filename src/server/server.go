@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"argo/src/knot"
@@ -72,13 +73,15 @@ func (s *Server) ListenAndServe() error {
 
 // handleCreateSession 创建新 session 目录并返回 sessionID。
 func (s *Server) handleNewSession(w http.ResponseWriter, r *http.Request) {
-	var body NewSessionRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
+	var req NewSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid req", http.StatusBadRequest)
 		return
 	}
 
-	session, err := voyage.NewSession(s.argoDir, body.CWD)
+	slog.Info("handling new session", "req", req)
+
+	session, err := voyage.NewSession(s.argoDir, req.CWD)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

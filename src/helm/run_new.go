@@ -4,7 +4,6 @@ import (
 	"argo/src/knot"
 	"argo/src/voyage"
 	"context"
-	"log/slog"
 )
 
 func RunNew(ctx context.Context, st *HelmState, session voyage.Voyage) <-chan knot.Event {
@@ -18,13 +17,18 @@ func RunNew(ctx context.Context, st *HelmState, session voyage.Voyage) <-chan kn
 			if phase == HelmPhaseModel {
 				pr := NewPhaseRunnerModel()
 				pr.Run(ctx, st, emit, session)
-			} else if phase == HelmPhaseExecTools ||
-				phase == HelmPhaseAsking {
+			} else if phase == HelmPhaseExecTools {
 				pr := NewPhaseRunnerExecTools()
 				pr.Run(ctx, st, emit, session)
+			} else if phase == HelmPhaseAsking {
+				pr := NewPhaseRunnerAsking()
+				pr.Run(ctx, st, emit, session)
+				// 此时需返回，等待客户端审批结果
+				return
 			} else {
 				// phase done
-				slog.Info("event done", "session id", session.ID)
+				pr := NewPhaseRunnerDone()
+				pr.Run(ctx, st, emit, session)
 				return
 			}
 

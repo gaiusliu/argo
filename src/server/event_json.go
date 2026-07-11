@@ -36,8 +36,9 @@ type ToolUseJSONNew struct {
 	Name          string         `json:"name"`
 	Parameters    map[string]any `json:"parameters"`
 	Output        string         `json:"output,omitempty"`
-	Status        string         `json:"status"`
+	Status        int            `json:"status"`
 	VerdictReason string         `json:"verdictReason,omitempty"`
+	VerdictResult int            `json:"verdictResult,omitempty"`
 }
 
 type UsageJSON struct {
@@ -90,7 +91,7 @@ func ToEventJSONNew(ev knot.Event) EventJSONNew {
 		}
 		if ev.ToolUse.Result.Status != knot.StatusDefault {
 			e.ToolUse.Output = ev.ToolUse.Result.Output
-			e.ToolUse.Status = statusString(ev.ToolUse.Result.Status)
+			e.ToolUse.Status = int(ev.ToolUse.Result.Status)
 		}
 	}
 	if ev.Type == knot.EventDone {
@@ -111,10 +112,11 @@ func toolUsesToJSON(tus []knot.ToolUse) []ToolUseJSONNew {
 			Name:          tu.Name,
 			Parameters:    tu.Parameters,
 			VerdictReason: tu.VerdictReason,
+			VerdictResult: tu.VerdictResult,
 		}
 		if tu.Result.Status != knot.StatusDefault {
 			tj.Output = tu.Result.Output
-			tj.Status = statusString(tu.Result.Status)
+			tj.Status = int(tu.Result.Status)
 		}
 		result[i] = tj
 	}
