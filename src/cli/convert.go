@@ -18,43 +18,14 @@ func toKnotEvent(ej server.EventJSONNew) knot.Event {
 	}
 
 	for _, tu := range ej.AskingToolUses {
-		ev.AskingToolUses = append(ev.AskingToolUses, knot.ToolUse{
-			ID:            tu.ID,
-			Name:          tu.Name,
-			Parameters:    tu.Parameters,
-			VerdictReason: tu.VerdictReason,
-			VerdictResult: tu.VerdictResult,
-			Result: knot.ToolResult{
-				Output: tu.Output,
-				Status: knot.ResultStatus(tu.Status),
-			},
-		})
+		ev.AskingToolUses = append(ev.AskingToolUses, toolUseFromJSON(tu))
 	}
-
 	for _, tu := range ej.DeniedToolUses {
-		ev.DeniedToolUses = append(ev.DeniedToolUses, knot.ToolUse{
-			ID:            tu.ID,
-			Name:          tu.Name,
-			Parameters:    tu.Parameters,
-			VerdictReason: tu.VerdictReason,
-			VerdictResult: tu.VerdictResult,
-			Result: knot.ToolResult{
-				Output: tu.Output,
-				Status: knot.ResultStatus(tu.Status),
-			},
-		})
+		ev.DeniedToolUses = append(ev.DeniedToolUses, toolUseFromJSON(tu))
 	}
 
 	if ej.ToolUse != nil {
-		ev.ToolUse = knot.ToolUse{
-			ID:         ej.ToolUse.ID,
-			Name:       ej.ToolUse.Name,
-			Parameters: ej.ToolUse.Parameters,
-			Result: knot.ToolResult{
-				Output: ej.ToolUse.Output,
-				Status: knot.ResultStatus(ej.ToolUse.Status),
-			},
-		}
+		ev.ToolUse = toolUseFromJSON(*ej.ToolUse)
 	}
 	if ej.Usage != nil {
 		ev.Usage = knot.TokenUsage{
@@ -63,4 +34,19 @@ func toKnotEvent(ej server.EventJSONNew) knot.Event {
 		}
 	}
 	return ev
+}
+
+// toolUseFromJSON 将 server.ToolUseJSONNew 转为 knot.ToolUse。
+func toolUseFromJSON(tu server.ToolUseJSONNew) knot.ToolUse {
+	return knot.ToolUse{
+		ID:            tu.ID,
+		Name:          tu.Name,
+		Parameters:    tu.Parameters,
+		VerdictReason: tu.VerdictReason,
+		VerdictResult: tu.VerdictResult,
+		Result: knot.ToolResult{
+			Output: tu.Output,
+			Status: knot.ResultStatus(tu.Status),
+		},
+	}
 }

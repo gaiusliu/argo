@@ -59,22 +59,20 @@ func (s *Server) handlePromptNew(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// 新消息路径：追加 user 消息到对话历史
-		// Saved 初始化为 transcript 已有条数，作为增量写入的起始游标
-		st.Saved = len(msgs)
 		userMsg := knot.Message{Role: knot.MessageRoleUser, Content: req.Message}
 		st.Messages = append(st.Messages, userMsg)
-		slog.Info("new user message", "msg", userMsg, "saved", st.Saved)
+		slog.Info("new user message", "msg", userMsg)
 	}
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
 	events := helm.RunNew(ctx, st, session)
-	streamAndSaveNew(w, events, session)
+	streamAndSaveNew(w, events)
 }
 
 // streamAndSave SSE 转发所有事件，不做持久化（持久化由状态机 checkpoint 负责）。
-func streamAndSaveNew(w http.ResponseWriter, events <-chan knot.Event, session voyage.Voyage) {
+func streamAndSaveNew(w http.ResponseWriter, events <-chan knot.Event) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)

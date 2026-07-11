@@ -8,8 +8,7 @@ import (
 )
 
 const (
-	HelmPhaseDefault int = iota
-	HelmPhaseModel
+	HelmPhaseModel     = iota + 1
 	HelmPhaseExecTools
 	HelmPhaseAsking
 	HelmPhaseDone
@@ -37,6 +36,7 @@ func NewHelmState(model string, messages []knot.Message) *HelmState {
 		Phase:    HelmPhaseModel,
 		Model:    model,
 		Messages: messages,
+		Saved:    len(messages),
 	}
 }
 

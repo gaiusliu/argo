@@ -4,6 +4,7 @@ import (
 	"argo/src/knot"
 	"argo/src/voyage"
 	"context"
+	"log/slog"
 )
 
 // PhaseRunner 状态机各阶段的执行器接口。
@@ -20,7 +21,10 @@ func newRunner(phase int) PhaseRunner {
 		return &PhaseRunnerExecTools{}
 	case HelmPhaseAsking:
 		return &PhaseRunnerAsking{}
+	case HelmPhaseDone:
+		return &PhaseRunnerDone{}
 	default:
+		slog.Error("unknown helm phase, falling back to done", "phase", phase)
 		return &PhaseRunnerDone{}
 	}
 }
