@@ -1,54 +1,75 @@
-# Handoff — 2026-07-12
+# Handoff — 2026-07-12（架构评审 + 改造规划）
 
 ## 本次会话成果
 
-### 1. 代码去 New 后缀（commit `fb3f9c4`）
-- 文件：`run_new.go` → `run.go`、`prompt_new.go` → `prompt.go`
-- 类型：`EventJSONNew` → `EventJSON`、`ToolUseJSONNew` → `ToolUseJSON`
-- 函数：`RunNew` → `Run`、`handlePromptNew` → `handlePrompt`、`streamAndSaveNew` → `streamAndSave`
-- B 类删旧+转正：`SaveApprovalsNew` → `SaveApprovals`、`MessagesToRecordsNew` → `MessagesToRecords`
+### 1. 架构全景评审
 
-### 2. LLM→model 重命名（commit `a4dc100` + `1c8617c`）
-- `RecordLLM` → `RecordModel`（常量值 `"llm"` → `"model"`）
-- `llmRecord()` → `modelRecord()`，`llmRecordToMessage()` → `modelRecordToMessage()`
-- 删除 3 个冗余文件：`checkpoint.go`、`stream.go`、`types.go`
+通读了 argo 全部 46 个 Go 文件，分析优劣势，结论：状态机 + 接口分层骨架正确，问题集中在全局状态、硬编码耦合、缺少 token 管理、零测试覆盖。
 
-### 3. 文档体系 grow-doc 标准化（commit `1c8617c`）
+### 2. kimi 提案评审
 
-**顶层重构：**
-- 新建 `README.md`（37 行）、`docs/architecture.md`（~120 行）
-- 删除 `what.md`、`how.md`、`todo.md`、`why.md`
+逐一评审了 [dependency-injection-plan.md](docs/dependency-injection-plan.md) 和 [architecture-evolution.md](docs/architecture-evolution.md)，去粗取精。详见两份文档中的更新。
 
-**模块设计文档更新：**
-- `helm/design.md`：LoopState→HelmState、PhaseRunner、checkpoint
-- `server/design.md`：路由修正、AskID→ToolUseVerdicts
-- `vault/design.md`：Vault 接口 2 方法、RecordLLM→RecordModel
-- `voyage/design.md`：CreateSession→NewSession、补 Voyage 接口
-- `vault/transcript.md`：删虛有字段、verdict 字符串→int、llm→model
-- 新建 `wake/design.md`
+### 3. 最终命名决策
 
-**迭代文档收尾：**
-- 007：状态 🚧→✅，3 项完成
-- 008：模块设计文档更新 ⏳→✅
-- 009：状态 🚧→✅，全局去 New 后缀，4 项完成
+| 名称 | 层次 | 说明 |
+|------|------|------|
+| `brig.Gate` | 顶层接口 | 门禁（替代 `Guard`） |
+| `brig.Warden` | 裁决引擎 | 典狱长（替代 `FileGuard`），分层评估 |
+| `brig.RuleLoader` | 规则来源接口 | `BuiltinRuleLoader` / `FileRuleLoader` / `StaticRuleLoader` |
+| `Tale` | 对话历史封装 | 替代 `HelmState` 中的 `Messages` + `Saved` |
+| `crew.Loader` | skill 加载接口 | 扫描 SKILL.md，渐进式披露 |
 
-## 当前模块状态
+### 4. 关键设计决策
 
-| 模块 | 状态 | 设计文档 |
-|------|------|---------|
-| knot/deck/sail/vault/brig/voyage/helm/server/wake | ✅ 稳定 | 已对齐 |
-| reef | 🚧 仅桩 | 文档描述完整压缩系统，实际 Compact() = `return messages, nil` |
-| crew | ❌ 零代码 | 三份设计文档，`src/crew/` 不存在 |
+- **voyage.Session 注入**：functional options 模式，不用构造器注入。生产代码零改动。
+- **brig 分层裁决**：mandates（红线）→ rules（RuleLoader）→ Ask，不摊平排序。
+- **`...RuleLoader` 变参**：不用 Option，因为只有规则来源这一个可变维度。
+- **Asking reply channel**：goroutine 阻塞等回复，不用事件总线。消除断连重建和磁盘序列化风险。
+- **crew 设计**：参照 pi / kilocode / opencode 三项目的渐进式披露模式。
 
-## 待处理
+## 改造计划
 
-1. **reef**：决定实现还是保持桩 → 更新文档
-2. **crew**：决定实现还是删除文档
-3. **brig/design.md** 小修：Allow→Approve、matchPattern 七→六种
-4. **knot/design.md** 小修：补 LogConfig、GetRawParam
-5. **008-argo-separation** 残存 TODO 清理（跨平台 server 二进制名）
+### 第一阶段：DI 改造（按推荐顺序实施）
+
+| # | 改造项 | 涉及文件 |
+|---|--------|---------|
+| 1 | `sail` 注入 `*http.Client` | `src/sail/sail.go` |
+| 2 | `brig` 拆分：`Gate` + `Warden` + `RuleLoader` | `src/brig/brig.go`、`src/brig/deny.go` |
+| 3 | 移除 `knot.GetConfig()` 全局单例 | `src/knot/config.go` 及所有调用点 |
+| 4 | `voyage.Session` 注入 Vault + Gate（Option 模式） | `src/voyage/voyage.go` |
+| 5 | `deck.Registry` 实例化 | `src/deck/tool.go` |
+| 6 | `helm.PhaseRunnerModel` 注入 Provider + Registry + Crew | `src/helm/phase_model.go` |
+| 7 | `crew` 模块实现 | 新建 `src/crew/` |
+| 8 | `AgentService` 抽象 | 新建，`src/server/prompt.go` handler 瘦身 |
+| 9 | Asking reply channel | `src/voyage/voyage.go`、`src/server/` |
+
+### 第二阶段：领域模型（需 compact / token 计数触发）
+
+| # | 改造项 |
+|---|--------|
+| 10 | `Tale` 封装 `HelmState` 中的 `Messages` + `Saved` |
+| 11 | 删除 `src/reef/`（compact 逻辑归 Tale） |
+| 12 | `ToolUse` 拆分为 `ToolCall` + `ToolExecution` |
+
+### 不做（定案）
+
+- `RunnerFactory` struct：一个 `newRunner()` 函数够用
+- `RuleLoader` 用 Option 模式：`...RuleLoader` 变参够用
+- DDD 四层架构：规模不匹配
+
+### 未来可做
+
+| 项 | 触发条件 |
+|----|----------|
+| 事件总线 | 多客户端同时操作同一 session（扇出 + 应答路由） |
+
+## 参考项目
+
+skill 管理设计已参照 pi、kilocode、opencode 三个本地项目，核心模式一致：扫描 SKILL.md → 渐进式披露到 system prompt → 模型用已有工具加载完整内容。
 
 ## 建议技能
 
-- `grow-doc`：继续文档维护
-- `two-axis-review`：代码审查
+- `grow-doc`：将改造计划生成 010 迭代文档（`docs/iterations/010-di-refactor/main.md`）
+- `two-axis-review`：改造完成后做代码审查
+- `codegen-exec-flow`：按执行流顺序逐步生成代码
