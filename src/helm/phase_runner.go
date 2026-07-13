@@ -9,19 +9,19 @@ import (
 
 // PhaseRunner 状态机各阶段的执行器接口。
 type PhaseRunner interface {
-	Run(ctx context.Context, st *HelmState, emit func(knot.Event), session voyage.Voyage)
+	Run(ctx context.Context, v *voyage.Voyage, emit func(knot.Event)) bool
 }
 
 // newRunner 按 Phase 返回对应的 runner 实现。
 func newRunner(phase int) PhaseRunner {
 	switch phase {
-	case HelmPhaseModel:
+	case voyage.PhaseModel:
 		return NewPhaseRunnerModel()
-	case HelmPhaseExecTools:
+	case voyage.PhaseExecTools:
 		return &PhaseRunnerExecTools{}
-	case HelmPhaseAsking:
+	case voyage.PhaseAsking:
 		return &PhaseRunnerAsking{}
-	case HelmPhaseDone:
+	case voyage.PhaseDone:
 		return &PhaseRunnerDone{}
 	default:
 		slog.Error("unknown helm phase, falling back to done", "phase", phase)

@@ -11,7 +11,7 @@ import (
 	"argo/src/voyage"
 )
 
-// handlePrompt 状态机统一入口。当 AskID 为空时处理新消息，非空时处理 EventAsk 回复。
+// handlePrompt 状态机统一入口。无 ToolUseVerdicts 为新消息，有则为 Ask 回复。
 func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	var req NewPromptRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -19,55 +19,45 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 从磁盘恢复 session 元数据
-	session, err := voyage.ResumeVoyage(req.SessionID)
+	slog.Info("handle prompt", "req", req)
+
+	// 从磁盘恢复 Voyage（内部已加载 Tale）
+	v, err := voyage.Resume(req.SessionID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
-	// 加载会话历史记录
-	msgs, err := session.Load()
-	if err != nil {
-		http.Error(w, "failed to load history: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// 生成新的状态机状态，从phase model开始
-	st := helm.NewHelmState(req.Model, msgs)
-
 	if len(req.ToolUseVerdicts) > 0 {
-		// 恢复helm state状态, phase会变更为exec tools
-		// Messages 由 transcript 提供（json:"-"，不被 state.json 覆盖）
-		err := st.Load(session.ID())
-		if err != nil {
-			http.Error(w, "failed to load helm state: "+err.Error(), http.StatusInternalServerError)
+		// Ask 回复路径：恢复控制流状态
+		if err := v.LoadState(); err != nil {
+			http.Error(w, "failed to load state: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
+		// 将审批结果写入 ToolUses
 		verdictsByIDs := make(map[string]int)
 		for _, verdict := range req.ToolUseVerdicts {
 			verdictsByIDs[verdict.ID] = verdict.VerdictResult
 		}
-
-		// 将审批结果写入helm state
-		for i, tu := range st.ToolUses {
-			if v, ok := verdictsByIDs[tu.ID]; ok {
-				tu.VerdictResult = v
-				st.ToolUses[i] = tu
+		for i, tu := range v.ToolUses {
+			if verdict, ok := verdictsByIDs[tu.ID]; ok {
+				tu.VerdictResult = verdict
+				v.ToolUses[i] = tu
 			}
 		}
 	} else {
-		// 新消息路径：追加 user 消息到对话历史
-		userMsg := knot.Message{Role: knot.MessageRoleUser, Content: req.Message}
-		st.Messages = append(st.Messages, userMsg)
-		slog.Info("new user message", "msg", userMsg)
+		// 新消息路径：设置初始状态 + 追加 user 消息
+		v.Phase = voyage.PhaseModel
+		v.Model = req.Model
+		v.Tale().AppendUser(req.Message)
+		slog.Info("new user message", "content", req.Message)
 	}
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	events := helm.Run(ctx, st, session)
+	events := helm.Run(ctx, v)
 	streamAndSave(w, events)
 }
 

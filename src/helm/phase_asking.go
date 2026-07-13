@@ -10,10 +10,16 @@ import (
 type PhaseRunnerAsking struct {
 }
 
-func (pr *PhaseRunnerAsking) Run(ctx context.Context, st *HelmState, emit func(knot.Event), session voyage.Voyage) {
-	slog.Info("phase asking", "session id", session.ID(), "helm state", st)
+func (pr *PhaseRunnerAsking) Run(ctx context.Context,
+	v *voyage.Voyage, emit func(knot.Event)) bool {
+	slog.Info("phase asking", "session id", v.ID())
 	// 断点前将本轮状态快照落盘
-	checkpoint(session, st)
-	st.Phase = HelmPhaseExecTools
-	st.Save(session.ID())
+	v.Phase = voyage.PhaseExecTools
+	checkpoint(v)
+	err := v.SaveState()
+	if err != nil {
+		slog.Error("save state failed", "error", err)
+	}
+
+	return true
 }

@@ -9,3 +9,9 @@ logs/
 
 # claude code settings backup
 settings-backup.json
+
+# codegraph
+.codegraph/
+
+# vscode
+.vscode/

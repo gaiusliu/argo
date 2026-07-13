@@ -10,7 +10,9 @@ import (
 type PhaseRunnerDone struct {
 }
 
-func (pr *PhaseRunnerDone) Run(ctx context.Context, st *HelmState, emit func(knot.Event), session voyage.Voyage) {
-	slog.Info("phase done", "session id", session.ID(), "helm state", st)
-	checkpoint(session, st)
+func (pr *PhaseRunnerDone) Run(ctx context.Context,
+	v *voyage.Voyage, emit func(knot.Event)) bool {
+	slog.Info("phase done", "session id", v.ID())
+	checkpoint(v)
+	return true
 }

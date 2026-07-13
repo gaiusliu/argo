@@ -47,7 +47,8 @@
       "Read(//c/Users/Gaiusliu/.argo/sessions/sess_1783753066088_16cf2fa94e11396b/**)",
       "Bash(git push *)",
       "Bash(cd c:/Users/Gaiusliu/Desktop/code/argo && rm src/server/prompt.go src/server/state.go src/helm/run.go src/helm/phase_llm.go src/helm/state_machine.go src/helm/phase_execute_tools.go)",
-      "Bash(gofmt -w src/helm/run.go src/helm/phase_model.go src/server/prompt.go src/server/event_json.go src/server/sse.go src/server/server.go src/vault/convert.go src/voyage/voyage.go src/cli/sse.go src/cli/convert.go)"
+      "Bash(gofmt -w src/helm/run.go src/helm/phase_model.go src/server/prompt.go src/server/event_json.go src/server/sse.go src/server/server.go src/vault/convert.go src/voyage/voyage.go src/cli/sse.go src/cli/convert.go)",
+      "Bash(gofmt -w src/sail/sail.go src/sail/provider.go)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Gaiusliu\\Desktop\\code\\argo\\src\\helm",

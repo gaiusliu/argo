@@ -60,8 +60,8 @@ type SessionInfoJSON struct {
 	Tokens       TokensJSON `json:"tokens"`
 }
 
-// ToSessionInfoJSON 将 voyage.SessionInfo 转为 API 响应的 JSON 结构。
-func ToSessionInfoJSON(info voyage.SessionInfo) SessionInfoJSON {
+// ToSessionInfoJSON 将 voyage.Info 转为 API 响应的 JSON 结构。
+func ToSessionInfoJSON(info voyage.Info) SessionInfoJSON {
 	return SessionInfoJSON{
 		ID:           info.ID,
 		WorkingDir:   info.WorkingDir,

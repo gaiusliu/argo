@@ -696,3 +696,27 @@ scanner.Scan() 内部调用 Read()  ← transport.go:3064
 4. **ToolMeta 删除**：verdict + status 在执行当时已知，直接写入 Record，不再需要跨 Phase 的内存缓存。
 
 **收益**：消除双写不一致风险；state.json 体积恒定；崩溃后可从 transcript.jsonl 完整恢复对话。
+
+## DEC-038：Voyage 单一聚合体——去接口 + Session 改名 + HelmState 合并 + Tale 归属
+
+**状态**：✅ 现行
+
+**日期**：2026-07-13
+
+**决策**：将 Voyage 从接口退化为单一聚合 struct，Session 改名 Voyage，HelmState 控制流字段和 Tale 对话历史全部并入 Voyage。`Voyage = Info(元数据) + Vault(存储) + Gate(门控) + Tale(对话) + Phase/Model/ToolUses/Saved(控制流)`。PhaseRunner 统一签名 `Run(ctx, v *Voyage, emit) bool`（返回 `true`=goroutine 退出）。
+
+**背景**：DI 改造过程中发现 Voyage 接口只有一个实现、HelmState 和 Session 生命周期完全一致，分开只增加传参和游标同步的复杂度。同时 architecture-evolution.md 提出的 Tale 封装需要归属决策——最初讨论归 HelmState 还是 Session。最终确认：三者合并为一个 Voyage，运行时上下文只需一个对象。
+
+**具体变更**：
+
+1. **去接口**：Voyage 接口删除，`*Voyage` 直接使用。变化性由内部 Vault/Gate 接口覆盖（已有 `WithVault`/`WithGate` Option 注入），Voyage 自身无需多态。
+2. **Session → Voyage**：结构体重命名，`SessionInfo` → `Info`，包级函数改用短名（`New`/`Resume`/`List`/`Delete`/`RenameByID`）。
+3. **HelmState 删除**：`Phase`/`Model`/`ToolUses`/`Saved` 并入 Voyage，Phase 常量移入 voyage 包。`helm_state.go` 文件删除。
+4. **Tale 归 Voyage**：Tale 封装消息列表 + 持久化游标（`AppendUser`/`AppendAssistant`/`AppendTool`/`BuildRequest`/`Unsaved`/`MarkSaved`），由 Voyage 构造时从 Vault 加载创建。`AppendMessages` 内化 `vault.MessagesToRecords` + `MarkSaved`，调用者不再手动管理游标。
+5. **SaveState/LoadState**：Voyage 自管理控制流持久化——SaveState 前自动从 Tale 同步游标，LoadState 后自动恢复游标到 Tale。
+6. **PhaseRunner 返回值**：`Run()` 返回 `bool`（`true`=goroutine 退出），run.go 循环统一判断退出条件，Phase 转换仍由各 Runner 内部设置。
+
+**替代方案**：
+- Tale 归 HelmState — 被否决，HelmState 每请求重建而 Tale 应与 Session 同生命周期
+- 保留 Voyage 接口 — 被否决，无多实现需求，预埋接口是过度设计
+- HelmState 独立存在 — 被否决，与 Voyage 生命周期一致，双对象传参增加复杂度

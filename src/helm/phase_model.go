@@ -4,7 +4,6 @@ import (
 	"argo/src/deck"
 	"argo/src/knot"
 	"argo/src/sail"
-	"argo/src/vault"
 	"argo/src/voyage"
 	"context"
 	"encoding/json"
@@ -13,7 +12,7 @@ import (
 )
 
 type PhaseRunnerModel struct {
-	Provider     sail.Provider // 每轮 Run() 根据 st.Model 重建
+	Provider     sail.Provider
 	Tools        []knot.Tool
 	SystemPrompt string
 }
@@ -27,25 +26,23 @@ func NewPhaseRunnerModel() *PhaseRunnerModel {
 	}
 }
 
-func (pr *PhaseRunnerModel) Run(ctx context.Context, st *HelmState, emit func(knot.Event), session voyage.Voyage) {
-	slog.Info("phase model", "session id", session.ID(), "helm state", st)
+func (pr *PhaseRunnerModel) Run(ctx context.Context,
+	v *voyage.Voyage, emit func(knot.Event)) bool {
+	slog.Info("phase model", "session id", v.ID())
 
-	// 根据模型名解析 Provider（空 → 配置默认，子代理各自独立）
+	// 根据模型名解析 Provider
 	var err error
-	pr.Provider, err = sail.NewProvider(st.Model)
+	pr.Provider, err = sail.NewProvider(v.Model)
 	if err != nil {
 		emit(knot.Event{Type: knot.EventError, Err: err})
-		st.Phase = HelmPhaseDone
-		return
+		v.Phase = voyage.PhaseDone
+		return false
 	}
+	v.Model = pr.Provider.Model()
 
-	// 同步兜底模型名回 st
-	st.Model = pr.Provider.Model()
-
-	// 写入系统提示词 - 不可以把系统提示词添加到 st.Messages 中
-	systemPrompt := knot.Message{Role: knot.MessageRoleSystem, Content: pr.SystemPrompt}
+	// 系统提示词不下沉到 Tale 中，由 Tale.BuildRequest 前插
 	slog.Info("build system prompt", "system prompt", pr.SystemPrompt)
-	msgs := append([]knot.Message{systemPrompt}, st.Messages...)
+	msgs := v.Tale().BuildRequest(pr.SystemPrompt)
 
 	events := pr.Provider.Chat(ctx, msgs, pr.Tools)
 
@@ -62,24 +59,18 @@ func (pr *PhaseRunnerModel) Run(ctx context.Context, st *HelmState, emit func(kn
 			textBuf.WriteString(evt.Delta)
 		} else if evt.Type == knot.EventError {
 			emit(evt)
-			st.Phase = HelmPhaseDone
-			return
+			v.Phase = voyage.PhaseDone
+			return false
 		}
-
 		emit(evt)
 	}
 
-	// 无工具调用
+	// 无工具调用 → 结束
 	if len(toolUses) == 0 {
-		newMsg := knot.Message{
-			Role:    knot.MessageRoleAssistant,
-			Content: textBuf.String(),
-		}
-		st.Messages = append(st.Messages, newMsg)
-		slog.Info("new message generated", "msg", newMsg)
-
-		st.Phase = HelmPhaseDone
-		return
+		v.Tale().AppendAssistant(textBuf.String(), nil)
+		slog.Info("new message generated", "content", textBuf.String())
+		v.Phase = voyage.PhaseDone
+		return false
 	}
 
 	// 有工具调用 → 构建 assistant 消息 + 转入执行阶段
@@ -88,45 +79,37 @@ func (pr *PhaseRunnerModel) Run(ctx context.Context, st *HelmState, emit func(kn
 		argsBytes, err := json.Marshal(tu.Parameters)
 		if err != nil {
 			slog.Error("marshal tool args failed", "tool", tu.Name, "error", err)
-			// 降级为空对象，保持消息链完整
 			argsBytes = []byte("{}")
 		}
 		toolCalls[i] = knot.ToolCall{ID: tu.ID, Name: tu.Name, Arguments: string(argsBytes)}
 	}
 
-	newMsg := knot.Message{
-		Role:      knot.MessageRoleAssistant,
-		Content:   textBuf.String(),
-		ToolCalls: toolCalls,
-	}
-	st.Messages = append(st.Messages, newMsg)
-	slog.Info("new message generated", "msg", newMsg)
+	v.Tale().AppendAssistant(textBuf.String(), toolCalls)
+	slog.Info("new message generated", "content", textBuf.String(), "toolCalls", len(toolCalls))
 
-	// exec tools阶段需要执行/审批的工具使用列表
-	st.ToolUses = toolUses
-	st.Phase = HelmPhaseExecTools
+	v.ToolUses = toolUses
+	v.Phase = voyage.PhaseExecTools
+	return false
 }
 
-// checkpoint 断点持久化——状态机在 Asking / Done 两个终点调用，将本轮状态快照落盘。
-func checkpoint(session voyage.Voyage, st *HelmState) {
-	// 增量消息写入 transcript
-	delta := st.Messages[st.Saved:]
+// checkpoint 断点持久化——Asking / Done 两个终点调用。
+func checkpoint(v *voyage.Voyage) {
+	// 增量消息写入 transcript（AppendMessages 内部完成 Record 转换 + MarkSaved）
+	delta := v.Tale().Unsaved()
 	if len(delta) > 0 {
 		toolUsesByIDs := make(map[string]knot.ToolUse)
-		for _, tu := range st.ToolUses {
+		for _, tu := range v.ToolUses {
 			toolUsesByIDs[tu.ID] = tu
 		}
-		records := vault.MessagesToRecords(delta, toolUsesByIDs, st.Model)
-		if err := session.Append(records); err != nil {
+		if err := v.AppendMessages(delta, toolUsesByIDs, v.Model); err != nil {
 			slog.Error("vault 写入失败", "error", err)
 			return
 		}
-		st.Saved = len(st.Messages)
-		slog.Info("transcript 增量写入成功", "delta", len(delta), "saved", st.Saved)
+		slog.Info("transcript 增量写入成功", "delta", len(delta), "saved", v.Tale().Saved())
 	}
 
 	// 持久化审批记录
-	if err := voyage.SaveApprovals(session); err != nil {
+	if err := voyage.SaveApprovals(v); err != nil {
 		slog.Error("保存审批记录失败", "error", err)
 	}
 }
