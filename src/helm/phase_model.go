@@ -8,17 +8,12 @@ import (
 	"argo/src/voyage"
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 )
 
 type PhaseRunnerModel struct {
-	Model        string
-	Provider     string
-	APIKey       string
-	BaseURL      string
+	Provider     sail.Provider // 每轮 Run() 根据 st.Model 重建
 	Tools        []knot.Tool
 	SystemPrompt string
 }
@@ -34,19 +29,25 @@ func NewPhaseRunnerModel() *PhaseRunnerModel {
 
 func (pr *PhaseRunnerModel) Run(ctx context.Context, st *HelmState, emit func(knot.Event), session voyage.Voyage) {
 	slog.Info("phase model", "session id", session.ID(), "helm state", st)
-	pr.Model = st.Model
-	pr.getModelConfig()
-	if st.Model != pr.Model {
-		st.Model = pr.Model
+
+	// 根据模型名解析 Provider（空 → 配置默认，子代理各自独立）
+	var err error
+	pr.Provider, err = sail.NewProvider(st.Model)
+	if err != nil {
+		emit(knot.Event{Type: knot.EventError, Err: err})
+		st.Phase = HelmPhaseDone
+		return
 	}
 
-	// 写入系统提示词 - 不可以把系统提示词添加到st.Messages中
+	// 同步兜底模型名回 st
+	st.Model = pr.Provider.Model()
+
+	// 写入系统提示词 - 不可以把系统提示词添加到 st.Messages 中
 	systemPrompt := knot.Message{Role: knot.MessageRoleSystem, Content: pr.SystemPrompt}
 	slog.Info("build system prompt", "system prompt", pr.SystemPrompt)
 	msgs := append([]knot.Message{systemPrompt}, st.Messages...)
 
-	s := sail.NewSailOpenAI(pr.Model, pr.Provider, pr.APIKey, pr.BaseURL, msgs, pr.Tools)
-	events := s.Chat(ctx)
+	events := pr.Provider.Chat(ctx, msgs, pr.Tools)
 
 	// 流式消费 + 收集
 	var toolUses []knot.ToolUse
@@ -104,57 +105,6 @@ func (pr *PhaseRunnerModel) Run(ctx context.Context, st *HelmState, emit func(kn
 	// exec tools阶段需要执行/审批的工具使用列表
 	st.ToolUses = toolUses
 	st.Phase = HelmPhaseExecTools
-}
-
-var openAIBaseURL = "https://api.openai.com/v1/chat/completions"
-
-func (pr *PhaseRunnerModel) getModelConfig() error {
-	cfg, err := knot.GetConfig()
-	if err != nil {
-		return fmt.Errorf("phase model: %w", err)
-	}
-
-	// 模型名为空时使用配置默认值
-	if pr.Model == "" {
-		pr.Model = cfg.Sail.Model
-	}
-
-	var pName string
-	var pCfg knot.ProviderConfig
-	for name, p := range cfg.Sail.Provider {
-		if _, ok := p.Models[pr.Model]; ok {
-			pName, pCfg = name, p
-			break
-		}
-	}
-	if pName == "" {
-		return fmt.Errorf("phase model: model %q not in any provider", pr.Model)
-	}
-
-	// 从环境变量读取 API Key
-	if len(pCfg.Env) == 0 {
-		return fmt.Errorf("phase model: provider %q env not set", pName)
-	}
-	apiKey := os.Getenv(pCfg.Env[0])
-	if apiKey == "" {
-		return fmt.Errorf("phase model: env %s empty", pCfg.Env[0])
-	}
-
-	pr.APIKey = apiKey
-
-	if pr.isOpenAI() {
-		pr.BaseURL = openAIBaseURL
-	} else {
-		pr.BaseURL, _ = pCfg.Options["base_url"].(string)
-		if pr.BaseURL == "" {
-			pr.BaseURL = openAIBaseURL
-		}
-	}
-	return nil
-}
-
-func (pr *PhaseRunnerModel) isOpenAI() bool {
-	return pr.Provider == "openai"
 }
 
 // checkpoint 断点持久化——状态机在 Asking / Done 两个终点调用，将本轮状态快照落盘。

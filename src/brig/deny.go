@@ -1,51 +1,42 @@
 package brig
 
-// loadStaticRules 合并全部静态规则组，返回独立副本供 Engine 加载。
-//
-// 规则组加载顺序即匹配优先级：先加载的规则组先被 resolveStaticRules 遍历。
-// 因此 denyRules 必须排在第一位——确保 Deny 规则优先于 Allow/Ask 命中，
-// 否则 "rm -rf /" 可能被 dangerCommands 的 "rm" Ask 规则先拦截，绕过 Deny。
-// 新增规则组时，破坏性操作（Deny）必须放在安全命令（Allow）之前。
-func loadStaticRules() []Rule {
+// BuiltinRuleLoader 加载内置静态规则。
+type BuiltinRuleLoader struct{}
+
+// Load 实现 RuleLoader 接口，按 Iron→Cord 顺序返回规则。
+func (l BuiltinRuleLoader) Load() []Rule {
 	var all []Rule
 
-	// 1. deny 库 — 不可逆的破坏性操作，命中即 Deny
+	// Iron：不可绕过的红线（原 denyRules）
 	all = append(all, denyRules...)
-
-	// 2. 安全命令 — 纯读取/查询类命令，直接 Allow
+	// Cord：可配置规则组
 	all = append(all, safeCommands...)
-
-	// 3. 危险命令 — 可能修改系统/文件状态，需用户确认
 	all = append(all, dangerCommands...)
-
-	// 4. 脚本解释器 — 无法预知脚本行为，需用户确认
 	all = append(all, interpreterCommands...)
-
-	// 5. 敏感文件 — 读取/搜索操作，防止泄露
 	all = append(all, sensitiveFiles...)
 
 	return all
 }
 
-// denyRules 不可绕过的静态拒绝规则
+// denyRules 不可绕过的铁律规则（Iron）
 var denyRules = []Rule{
 	// 破坏性命令
-	{Action: Deny, Tool: "bash", Pattern: "rm -rf /"},
-	{Action: Deny, Tool: "bash", Pattern: "rm -rf /*"},
-	{Action: Deny, Tool: "bash", Pattern: "mkfs"},
-	{Action: Deny, Tool: "bash", Pattern: "dd if="},
-	{Action: Deny, Tool: "bash", Pattern: ":(){ :|:& };:"},
+	{Action: Deny, Tool: "bash", Pattern: "rm -rf /", Type: RuleIron},
+	{Action: Deny, Tool: "bash", Pattern: "rm -rf /*", Type: RuleIron},
+	{Action: Deny, Tool: "bash", Pattern: "mkfs", Type: RuleIron},
+	{Action: Deny, Tool: "bash", Pattern: "dd if=", Type: RuleIron},
+	{Action: Deny, Tool: "bash", Pattern: ":(){ :|:& };:", Type: RuleIron},
 
 	// SSRF 防护 — 禁止访问内网地址
-	{Action: Deny, Tool: "web_fetch", Pattern: "127.0.0.1"},
-	{Action: Deny, Tool: "web_fetch", Pattern: "localhost"},
-	{Action: Deny, Tool: "web_fetch", Pattern: "0.0.0.0"},
+	{Action: Deny, Tool: "web_fetch", Pattern: "127.0.0.1", Type: RuleIron},
+	{Action: Deny, Tool: "web_fetch", Pattern: "localhost", Type: RuleIron},
+	{Action: Deny, Tool: "web_fetch", Pattern: "0.0.0.0", Type: RuleIron},
 
 	// 系统关键文件 — 拒绝写入
-	{Action: Deny, Tool: "write", Pattern: "/etc/shadow"},
-	{Action: Deny, Tool: "edit", Pattern: "/etc/shadow"},
-	{Action: Deny, Tool: "write", Pattern: "C:\\Windows\\System32"},
-	{Action: Deny, Tool: "edit", Pattern: "C:\\Windows\\System32"},
+	{Action: Deny, Tool: "write", Pattern: "/etc/shadow", Type: RuleIron},
+	{Action: Deny, Tool: "edit", Pattern: "/etc/shadow", Type: RuleIron},
+	{Action: Deny, Tool: "write", Pattern: "C:\\Windows\\System32", Type: RuleIron},
+	{Action: Deny, Tool: "edit", Pattern: "C:\\Windows\\System32", Type: RuleIron},
 }
 
 // safeCommands 纯读取/查询类 bash 命令，直接 Allow

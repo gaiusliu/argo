@@ -258,6 +258,7 @@ type SailConfig struct {
 
 // ProviderConfig provider 级别配置
 type ProviderConfig struct {
+	API     string                 `json:"api,omitempty"` // "openai-completions"（空默认同）
 	Name    string                 `json:"name,omitempty"`
 	Env     []string               `json:"env,omitempty"`
 	Options map[string]any         `json:"options,omitempty"`

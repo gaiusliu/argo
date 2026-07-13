@@ -6,10 +6,10 @@
 |------|------|------|
 | **knot** | 跨模块共享类型：Message / Event / ToolUse / Config / ToolVerdict | ✅ 稳定 |
 | **deck** | 工具注册、发现、调用。内置工具 + CLI 外部工具，统一 Tool 接口 | ✅ 稳定 |
-| **sail** | LLM 接入层。OpenAI / DeepSeek / Kimi / MiniMax / 豆包，SSE 流式解析 | ✅ 稳定 |
+| **sail** | LLM 接入层。Provider 接口（Name/Model/Chat）+ ProviderOpenAI 实现，`NewProvider` 工厂按 `api` 协议路由 | ✅ 稳定 |
 | **vault** | 纯存储层。transcript.jsonl 读写 + Message ↔ Record 转换 | ✅ 稳定 |
-| **brig** | 权限门控。5 层优先级（Deny > Allow > Ask）+ 用户审批持久化 | ✅ 稳定 |
-| **voyage** | 会话聚合层。Session = Vault + Guard + SessionInfo，会话 CRUD | ✅ 稳定 |
+| **brig** | 权限门控。Gate 接口 + Warden 分层裁决（Iron 红线 → Cord 可配置 → 用户审批 → Ask）+ RuleLoader 规则来源 | ✅ 稳定 |
+| **voyage** | 会话聚合层。Session = Vault + Gate + SessionInfo + SessionOption 注入，会话 CRUD | ✅ 稳定 |
 | **helm** | Agent 核心循环。状态机四 Phase + checkpoint 增量持久化 | ✅ 稳定 |
 | **server** | 无状态 HTTP 后端。chi 路由 + SSE 流式事件 | ✅ 稳定 |
 | **wake** | 日志模块。日期+大小自动轮转，过期清理 | ✅ 稳定 |
@@ -42,7 +42,7 @@ flowchart TB
 
 - helm 依赖 Voyage 接口（非具体 Session），方便测试替换
 - vault 绑定 session 目录，不知道 session ID
-- brig 绑定 WorkingDir，通过指纹匹配审批规则
+- brig 绑定 WorkingDir，通过 Gate 接口分层裁决
 - server 每次请求独立：从磁盘恢复状态 → Run → 流式转发 → 持久化
 
 ## 数据流（一回合）

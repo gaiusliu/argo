@@ -1,5 +1,5 @@
 // Package brig 实现工具调用的权限审批门控。
-// FileGuard 在 helm.RunLoop 执行工具前判定 Allow/Ask/Deny。
+// Warden 在 helm.Run 执行工具前做分层裁决。
 package brig
 
 import (
@@ -20,20 +20,31 @@ const (
 	UserDeny        // 用户审批拒绝
 )
 
-// Guard 工具调用鉴权接口。
-type Guard interface {
+// RuleType 规则类型——零值无意义，必须显式指定。
+const (
+	RuleIron = iota + 1 // 红线，铁律不可绕过
+	RuleCord            // 普通可配置规则，绳令可按需调整
+)
+
+// Gate 工具调用门禁接口（替代 Guard）。
+type Gate interface {
 	Evaluate(tu knot.ToolUse) (int, string)
 	Approve(tu knot.ToolUse)
-	IsCachedApproval(tu knot.ToolUse) bool
 	Snapshot() []ApprovalEntry // 导出用户审批记录
 	Restore([]ApprovalEntry)   // 从快照恢复
+}
+
+// RuleLoader 规则来源接口。Load 在构造 Warden 时调用一次，Evaluate 不再调用。
+type RuleLoader interface {
+	Load() []Rule
 }
 
 // Rule 规则即记忆 — 既是求值依据，也是已审批记录
 type Rule struct {
 	Tool    string // 工具名（bash / write / edit / web_fetch / read / grep）
 	Pattern string // 匹配模式（命令、目录、域名、文件路径）
-	Action  int    // Allow / Ask / Deny
+	Action  int    // Approve / Ask / Deny
+	Type    int    // RuleIron / RuleCord（零值无意义，必须显式指定）
 }
 
 // ApprovalEntry 用户审批记录的持久化条目。
@@ -48,55 +59,39 @@ type ToolCall struct {
 	WorkingDir string
 }
 
-// FileGuard 基于静态规则 + 内存动态审批的 Guard 实现。
-type FileGuard struct {
-	staticRules   []Rule
+// Warden 分层裁决引擎（替代 FileGuard）。构造时从 RuleLoader 一次性加载规则，
+// 按 Type 分为 iron（红线）和 cord（普通）两桶，Evaluate 时只读遍历。
+type Warden struct {
+	iron          []Rule
+	cord          []Rule
 	userApprovals map[ToolCall]struct{}
 	workingDir    string
 	mu            sync.RWMutex
 }
 
-// NewFileGuard 创建 FileGuard 并加载静态规则副本。
-// workingDir 作为 ToolCall 指纹的一部分参与审批匹配。
-func NewFileGuard(workingDir string) *FileGuard {
-	return &FileGuard{
-		staticRules:   loadStaticRules(),
+// NewWarden 创建 Warden，从 loaders 加载规则并按 Type 分桶。
+func NewWarden(workingDir string, loaders ...RuleLoader) *Warden {
+	w := &Warden{
 		userApprovals: make(map[ToolCall]struct{}),
 		workingDir:    workingDir,
 	}
-}
-
-// resolveStaticRules 遍历静态规则列表，首个命中即返回（不再取最高优先级）。
-// 正确性依赖 loadStaticRules 中规则组的排列顺序——Deny 组必须在 Allow/Ask 组之前。
-// 如需调整规则顺序，参见 deny.go 中 loadStaticRules 的注释。
-func resolveStaticRules(staticRules []Rule, tc ToolCall) (int, string) {
-	for _, rule := range staticRules {
-		if rule.Tool != tc.ToolName {
-			continue
-		}
-		if matchPattern(tc.RawParam, rule.Pattern) {
-			if rule.Action == Deny {
-				return Deny, formatReason(tc, "denied")
-			}
-
-			if rule.Action == Approve {
-				return Approve, formatReason(tc, "allowed")
-			}
-
-			if rule.Action == Ask {
-				return Ask, formatReason(tc, "permission required")
+	// 一次性加载所有规则，按类型分桶
+	for _, ld := range loaders {
+		for _, r := range ld.Load() {
+			switch r.Type {
+			case RuleIron:
+				w.iron = append(w.iron, r)
+			case RuleCord:
+				w.cord = append(w.cord, r)
 			}
 		}
-
 	}
-	return Ask, formatReason(tc, "permission required")
+	return w
 }
 
-func (fg *FileGuard) approved(call ToolCall) bool {
-	fg.mu.RLock()
-	defer fg.mu.RUnlock()
-	_, ok := fg.userApprovals[call]
-	return ok
+// formatReason 生成统一格式的门控原因描述
+func formatReason(tc ToolCall, suffix string) string {
+	return "tool name: " + tc.ToolName + " - " + suffix
 }
 
 // scopeKey 将原始参数转为审批粒度键。web_fetch 按域名匹配，其余工具按精确参数匹配。
@@ -109,69 +104,87 @@ func scopeKey(toolName, raw string) string {
 	return raw
 }
 
-// formatReason 生成统一格式的门控原因描述
-func formatReason(tc ToolCall, suffix string) string {
-	return "tool name: " + tc.ToolName + " - " + suffix
-}
-
-// Evaluate 对工具调用做门控判定，返回裁决和原因描述。
-// 流程：静态规则匹配（Deny > Allow > Ask）→ 已审批检查。
-func (fg *FileGuard) Evaluate(tu knot.ToolUse) (int, string) {
-	tc := ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: fg.workingDir}
-	verdict, reason := resolveStaticRules(fg.staticRules, tc)
-	slog.Info("门控判定", "tool", tu.Name, "verdict", verdict, "reason", reason)
-	switch verdict {
-	case Deny:
-		return Deny, reason
-
-	case Approve:
-		return Approve, reason
-
-	case Ask:
-		if fg.approved(tc) {
-			return Approve, formatReason(tc, "user approved")
+// evaluate 对一组规则做匹配，首个命中即返回。
+func evaluate(rules []Rule, tc ToolCall) (int, string) {
+	for _, r := range rules {
+		if r.Tool != tc.ToolName {
+			continue
 		}
-
-		return Ask, formatReason(tc, "permission required")
+		if matchPattern(tc.RawParam, r.Pattern) {
+			if r.Action == Deny {
+				return Deny, formatReason(tc, "denied")
+			}
+			if r.Action == Approve {
+				return Approve, formatReason(tc, "allowed")
+			}
+			if r.Action == Ask {
+				return Ask, formatReason(tc, "permission required")
+			}
+		}
 	}
-
-	// Go 编译器无法证明 switch 已穷尽 Verdict 的 iota 值，保留此兜底 return
 	return Ask, formatReason(tc, "permission required")
 }
 
-// Approve 追加一条动态规则（用户确认后调用）。
-func (fg *FileGuard) Approve(tu knot.ToolUse) {
-	fg.mu.Lock()
-	defer fg.mu.Unlock()
-	fg.userApprovals[ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: fg.workingDir}] = struct{}{}
+// Evaluate 分层裁决：Iron（红线）→ Cord（可配置）→ 用户审批 → Ask。
+func (w *Warden) Evaluate(tu knot.ToolUse) (int, string) {
+	tc := ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: w.workingDir}
+
+	// 1. Iron 红线优先
+	if verdict, reason := evaluate(w.iron, tc); verdict != Ask {
+		slog.Info("门控判定", "tool", tu.Name, "verdict", verdict, "layer", "iron", "reason", reason)
+		return verdict, reason
+	}
+
+	// 2. Cord 可配置规则
+	if verdict, reason := evaluate(w.cord, tc); verdict != Ask {
+		// 规则命中 Approve → 检查是否已有用户审批记录
+		if verdict == Approve {
+			slog.Info("门控判定", "tool", tu.Name, "verdict", verdict, "layer", "cord", "reason", reason)
+			return Approve, reason
+		}
+		slog.Info("门控判定", "tool", tu.Name, "verdict", verdict, "layer", "cord", "reason", reason)
+		return verdict, reason
+	}
+
+	// 3. 动态审批记录
+	if w.approved(tc) {
+		return Approve, formatReason(tc, "user approved")
+	}
+
+	// 4. 兜底 Ask
+	return Ask, formatReason(tc, "permission required")
 }
 
-// IsCachedApproval 检查工具调用是否命中用户已有审批记录。
-// 当 Evaluate 返回 Allow 时，调用方可借此区分 auto_allow 和 cached_allow。
-func (fg *FileGuard) IsCachedApproval(tu knot.ToolUse) bool {
-	tc := ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: fg.workingDir}
-	fg.mu.RLock()
-	defer fg.mu.RUnlock()
-	_, ok := fg.userApprovals[tc]
+func (w *Warden) approved(call ToolCall) bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	_, ok := w.userApprovals[call]
 	return ok
 }
 
-func (fg *FileGuard) Snapshot() []ApprovalEntry {
-	fg.mu.RLock()
-	defer fg.mu.RUnlock()
-	result := make([]ApprovalEntry, 0, len(fg.userApprovals))
-	for tc := range fg.userApprovals {
+// Approve 追加一条动态规则（用户确认后调用）。
+func (w *Warden) Approve(tu knot.ToolUse) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.userApprovals[ToolCall{ToolName: tu.Name, RawParam: scopeKey(tu.Name, knot.GetRawParam(tu)), WorkingDir: w.workingDir}] = struct{}{}
+}
+
+func (w *Warden) Snapshot() []ApprovalEntry {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	result := make([]ApprovalEntry, 0, len(w.userApprovals))
+	for tc := range w.userApprovals {
 		result = append(result, ApprovalEntry{Tool: tc.ToolName, Pattern: tc.RawParam})
 	}
 	return result
 }
 
 // Restore 从快照恢复用户审批记录。
-func (fg *FileGuard) Restore(entries []ApprovalEntry) {
-	fg.mu.Lock()
-	defer fg.mu.Unlock()
+func (w *Warden) Restore(entries []ApprovalEntry) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	for _, entry := range entries {
-		fg.userApprovals[ToolCall{ToolName: entry.Tool, RawParam: entry.Pattern, WorkingDir: fg.workingDir}] = struct{}{}
+		w.userApprovals[ToolCall{ToolName: entry.Tool, RawParam: entry.Pattern, WorkingDir: w.workingDir}] = struct{}{}
 	}
 }
 

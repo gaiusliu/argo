@@ -8,39 +8,50 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
 
 	"argo/src/knot"
 )
 
-type Sail interface {
-	Chat(ctx context.Context, emit func(knot.Event))
-}
-
-func NewSailOpenAI(model, provider, apiKey, baseURL string,
-	messages []knot.Message, tools []knot.Tool) *SailOpenAI {
-	return &SailOpenAI{
-		Model:    model,
-		Provider: provider,
-		APIKey:   apiKey,
-		BaseURL:  baseURL,
-		Messages: messages,
-		Tools:    tools,
+func NewProviderOpenAI(model, provider, apiKey, baseURL string,
+	messages []knot.Message, tools []knot.Tool, httpClient *http.Client) *ProviderOpenAI {
+	return &ProviderOpenAI{
+		model:      model,
+		Provider:   provider,
+		APIKey:     apiKey,
+		BaseURL:    baseURL,
+		Messages:   messages,
+		Tools:      tools,
+		HTTPClient: httpClient,
 	}
 }
 
-type SailOpenAI struct {
-	Model    string
-	Provider string
-	APIKey   string
-	BaseURL  string
-	Messages []knot.Message
-	Tools    []knot.Tool
-	Req      openAIReq
+type ProviderOpenAI struct {
+	model      string // 模型名（unexported，通过 Model() 访问）
+	Provider   string // 供应商名（通过 Name() 访问）
+	APIKey     string
+	BaseURL    string
+	Messages   []knot.Message
+	Tools      []knot.Tool
+	HTTPClient *http.Client // nil 时回退 http.DefaultClient
+	Req        openAIReq
 }
 
-func (s *SailOpenAI) buildRequestBody() {
+// Name 实现 Provider 接口。
+func (s *ProviderOpenAI) Name() string { return s.Provider }
+
+// Model 实现 Provider 接口。
+func (s *ProviderOpenAI) Model() string { return s.model }
+
+// client 返回注入的 HTTP client，nil 时回退 DefaultClient
+func (s *ProviderOpenAI) client() *http.Client {
+	if s.HTTPClient != nil {
+		return s.HTTPClient
+	}
+	return http.DefaultClient
+}
+
+func (s *ProviderOpenAI) buildRequestBody() {
 	openAIMsgs := make([]openAIMsg, 0, len(s.Messages))
 
 	// 写入历史消息
@@ -87,19 +98,22 @@ func (s *SailOpenAI) buildRequestBody() {
 	}
 
 	s.Req = openAIReq{
-		Model:    s.Model,
+		Model:    s.model,
 		Messages: openAIMsgs,
 		Stream:   true,
 		Tools:    tools,
 	}
 }
 
-func (s *SailOpenAI) Chat(ctx context.Context) <-chan knot.Event {
+// Chat 实现 Provider 接口。
+func (s *ProviderOpenAI) Chat(ctx context.Context, messages []knot.Message, tools []knot.Tool) <-chan knot.Event {
+	s.Messages = messages
+	s.Tools = tools
 	s.buildRequestBody()
 	return s.doChat(ctx)
 }
 
-func (s *SailOpenAI) doChat(ctx context.Context) <-chan knot.Event {
+func (s *ProviderOpenAI) doChat(ctx context.Context) <-chan knot.Event {
 	const maxRetries = 3
 	var retryDelay time.Duration // 下次重试前的等待时间
 
@@ -136,7 +150,7 @@ func (s *SailOpenAI) doChat(ctx context.Context) <-chan knot.Event {
 		httpReq.Header.Set("Authorization", "Bearer "+s.APIKey)
 		httpReq.Header.Set("Content-Type", "application/json")
 
-		resp, err := http.DefaultClient.Do(httpReq)
+		resp, err := s.client().Do(httpReq)
 		if err != nil {
 			// 网络错误可重试
 			if attempt < maxRetries-1 {
@@ -197,51 +211,6 @@ func (s *SailOpenAI) doChat(ctx context.Context) <-chan knot.Event {
 	out <- knot.Event{Type: knot.EventError, Err: &APIError{Code: "server_error", Retryable: false, Message: "重试次数已耗尽"}}
 	close(out)
 	return out
-}
-
-// Chat 发送 LLM 流式请求，返回事件 channel。
-// 查找模型所属 provider → 读 API Key → 路由 adapter → 透传事件流。
-func Chat(ctx context.Context, modelName string, req knot.ChatRequest) (<-chan knot.Event, error) {
-	cfg, err := knot.GetConfig()
-	if err != nil {
-		return nil, fmt.Errorf("sail: %w", err)
-	}
-
-	// 模型名为空时使用配置默认值
-	if modelName == "" {
-		modelName = cfg.Sail.Model
-	}
-
-	var pName string
-	var pCfg knot.ProviderConfig
-	for name, p := range cfg.Sail.Provider {
-		if _, ok := p.Models[modelName]; ok {
-			pName, pCfg = name, p
-			break
-		}
-	}
-	if pName == "" {
-		return nil, fmt.Errorf("sail: model %q not in any provider", modelName)
-	}
-
-	// 从环境变量读取 API Key
-	if len(pCfg.Env) == 0 {
-		return nil, fmt.Errorf("sail: provider %q env not set", pName)
-	}
-	apiKey := os.Getenv(pCfg.Env[0])
-	if apiKey == "" {
-		return nil, fmt.Errorf("sail: env %s empty", pCfg.Env[0])
-	}
-
-	// 按 provider 名称路由到对应 adapter
-	if pName == "openai" {
-		return OpenAIChat(ctx, apiKey, modelName, req)
-	}
-	baseURL, _ := pCfg.Options["base_url"].(string)
-	if baseURL == "" {
-		baseURL = openAIBaseURL
-	}
-	return CompatibleChat(ctx, apiKey, baseURL, modelName, req)
 }
 
 // Window 返回模型的 context window token 上限。

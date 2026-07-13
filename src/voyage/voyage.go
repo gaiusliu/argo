@@ -1,5 +1,5 @@
 // Package voyage 管理会话生命周期——创建、恢复、列表、改名、删除。
-// Session 聚合 Vault（纯存储）+ brig.Engine（权限门控），为 RunLoop 提供运行时上下文。
+// Session 聚合 Vault（纯存储）+ brig.Gate（权限门控），为 RunLoop 提供运行时上下文。
 package voyage
 
 import (
@@ -58,11 +58,24 @@ type SessionInfo struct {
 type Session struct {
 	SessionInfo
 	Vault vault.Vault
-	Guard brig.Guard
+	Gate  brig.Gate
+}
+
+// SessionOption 函数选项，用于注入 Vault / Gate 等依赖。
+type SessionOption func(*Session)
+
+// WithVault 覆盖默认的 FileVault。
+func WithVault(v vault.Vault) SessionOption {
+	return func(s *Session) { s.Vault = v }
+}
+
+// WithGate 覆盖默认的 Warden + BuiltinRuleLoader。
+func WithGate(g brig.Gate) SessionOption {
+	return func(s *Session) { s.Gate = g }
 }
 
 // NewSession 创建新会话：生成 ID → 建目录 → 写 session.json → 组装 Session。
-func NewSession(argoDir, workingDir string) (*Session, error) {
+func NewSession(argoDir, workingDir string, opts ...SessionOption) (*Session, error) {
 	id := genSessionID()
 
 	// 创建会话目录
@@ -85,16 +98,21 @@ func NewSession(argoDir, workingDir string) (*Session, error) {
 		return nil, err
 	}
 
-	return &Session{
+	s := &Session{
 		SessionInfo: info,
 		Vault:       vault.NewFileVault(sessionDir),
-		Guard:       brig.NewFileGuard(workingDir),
-	}, nil
+		Gate:        brig.NewWarden(workingDir, &brig.BuiltinRuleLoader{}),
+	}
+	// 应用 Option 覆盖默认值
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
 }
 
 // Resume 恢复已有会话为完整 Session（含 Vault + Engine）。
 // 从 session.json 读取元数据，WorkingDir 自动用于创建 Engine。
-func ResumeSession(argoDir, id string) (*Session, error) {
+func ResumeSession(argoDir, id string, opts ...SessionOption) (*Session, error) {
 	dir := sessionDir(argoDir, id)
 	info, err := loadSessionInfo(dir)
 	if err != nil {
@@ -103,7 +121,11 @@ func ResumeSession(argoDir, id string) (*Session, error) {
 	session := &Session{
 		SessionInfo: info,
 		Vault:       vault.NewFileVault(dir),
-		Guard:       brig.NewFileGuard(info.WorkingDir),
+		Gate:        brig.NewWarden(info.WorkingDir, &brig.BuiltinRuleLoader{}),
+	}
+	// 应用 Option 覆盖默认值
+	for _, opt := range opts {
+		opt(session)
 	}
 
 	// 恢复已持久化的用户审批记录（新会话文件不存在为正常情况）
@@ -113,14 +135,14 @@ func ResumeSession(argoDir, id string) (*Session, error) {
 	}
 
 	if len(approvals) > 0 {
-		session.Guard.Restore(approvals)
+		session.Gate.Restore(approvals)
 	}
 	return session, nil
 }
 
 // Resume 恢复已有会话为完整 Session（含 Vault + Engine）。
 // 从 session.json 读取元数据，WorkingDir 自动用于创建 Engine。
-func ResumeVoyage(id string) (Voyage, error) {
+func ResumeVoyage(id string, opts ...SessionOption) (Voyage, error) {
 	dir := sessionDir(knot.ArgoDir(), id)
 	info, err := loadSessionInfo(dir)
 	if err != nil {
@@ -129,7 +151,11 @@ func ResumeVoyage(id string) (Voyage, error) {
 	session := &Session{
 		SessionInfo: info,
 		Vault:       vault.NewFileVault(dir),
-		Guard:       brig.NewFileGuard(info.WorkingDir),
+		Gate:        brig.NewWarden(info.WorkingDir, &brig.BuiltinRuleLoader{}),
+	}
+	// 应用 Option 覆盖默认值
+	for _, opt := range opts {
+		opt(session)
 	}
 
 	// 恢复已持久化的用户审批记录（新会话文件不存在为正常情况）
@@ -139,17 +165,17 @@ func ResumeVoyage(id string) (Voyage, error) {
 	}
 
 	if len(approvals) > 0 {
-		session.Guard.Restore(approvals)
+		session.Gate.Restore(approvals)
 	}
 	return session, nil
 }
 
 func (s *Session) Approve(tu knot.ToolUse) {
-	s.Guard.Approve(tu)
+	s.Gate.Approve(tu)
 }
 
 func (s *Session) UserApprovals() []brig.ApprovalEntry {
-	return s.Guard.Snapshot()
+	return s.Gate.Snapshot()
 }
 
 func (s *Session) ID() string {
@@ -170,14 +196,14 @@ func (s *Session) Rename(name string) {
 }
 
 func (s *Session) Evaluate(tu knot.ToolUse) (int, string) {
-	return s.Guard.Evaluate(tu)
+	return s.Gate.Evaluate(tu)
 }
 
 func (s *Session) WorkingDir() string {
 	return s.SessionInfo.WorkingDir
 }
 
-// SaveApprovals 持久化 Guard 中的用户审批记录到 session 目录。
+// SaveApprovals 持久化 Gate 中的用户审批记录到 session 目录。
 func SaveApprovals(v Voyage) error {
 	return saveApprovals(sessionDir(knot.ArgoDir(), v.ID()), v.UserApprovals())
 }
