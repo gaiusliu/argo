@@ -18,9 +18,19 @@ const (
 	reset = "\033[0m"
 )
 
-// askCLI 通过 stdin 询问用户是否允许工具执行，返回是否允许。
+// askVerdict 用户对工具执行请求的裁决结果。
+type askVerdict int
+
+const (
+	verdictDeny      askVerdict = iota // 拒绝
+	verdictApprove                     // 批准
+	verdictInterrupt                   // 终止整个 session
+)
+
+// askCLI 通过 stdin 询问用户是否允许工具执行。
 // 对 write/edit 工具额外展示彩色 diff 变更预览。
-func askCLI(stdin *bufio.Reader, tu knot.ToolUse) bool {
+// 输入 /interrupt 返回 verdictInterrupt。
+func askCLI(stdin *bufio.Reader, tu knot.ToolUse) askVerdict {
 	switch tu.Name {
 	case "write", "edit":
 		showDiff(tu)
@@ -28,9 +38,17 @@ func askCLI(stdin *bufio.Reader, tu knot.ToolUse) bool {
 
 	fmt.Fprintf(os.Stderr, "\n⚠️  %s\n", tu.VerdictReason)
 	fmt.Fprintf(os.Stderr, "   工具: %s, 参数: %s\n", tu.Name, knot.GetRawParam(tu))
-	fmt.Fprintf(os.Stderr, "   执行? [y/N]: ")
+	fmt.Fprintf(os.Stderr, "   执行? [y/N/stop]: ")
 	answer, _ := stdin.ReadString('\n')
-	return strings.EqualFold(strings.TrimSpace(answer), "y")
+	answer = strings.TrimSpace(answer)
+
+	if strings.EqualFold(answer, "/interrupt") || strings.EqualFold(answer, "stop") {
+		return verdictInterrupt
+	}
+	if strings.EqualFold(answer, "y") {
+		return verdictApprove
+	}
+	return verdictDeny
 }
 
 // showDiff 读取目标文件当前内容，与工具参数中的新内容做 diff，彩色输出到 stderr。

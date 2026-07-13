@@ -1,112 +1,78 @@
-# Handoff — 2026-07-13（Tale 引入 + Voyage 合并完成）
+# Handoff — 2026-07-14（Interrupt 完成 + Asking 延迟持久化）
 
-## 上次会话成果（2026-07-12）
+## 历史会话成果
 
-参见旧版 handoff 或 commit `80c2538`。核心产出：架构全景评审、kimi 提案评审、最终命名决策、改造计划。
+- 2026-07-12：架构全景评审、kimi 提案、命名决策（commit `80c2538`）
+- 2026-07-13：Tale 引入 + Voyage 合并 + DI 改造 #1 #2 #4 #6（commit `b30b187`、`a3a7847`）
 
-## 上次会话成果（2026-07-13 前半）
+## 本次会话成果（2026-07-14）
 
-| # | 改造项 | 涉及文件 |
-|---|--------|---------|
-| 1 | `sail` 注入 `*http.Client` | `src/sail/sail.go` |
-| 2 | `brig` 拆分：`Gate` + `Warden` + `RuleLoader` | `src/brig/brig.go`、`src/brig/deny.go`、`src/voyage/voyage.go` |
-| 4 | `voyage.Session` 注入 Vault + Gate（Option 模式） | `src/voyage/voyage.go` |
-| 6 | `sail.Provider` 接口重构 + `PhaseRunnerModel` 注入 | `src/sail/provider.go`、`src/sail/sail.go`、`src/knot/types.go`、`src/helm/phase_model.go` |
+### Interrupt 能力
 
-跳过：#3 移除 `knot.GetConfig()`（保留全局单例）、#5 `deck.Registry` 实例化（收益不大）。
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| run.go ctx 检查 | `src/helm/run.go` | for 循环前 `select { case <-ctx.Done(): return }` |
+| Signal 中断 | `src/cli/main.go` | `signal.Notify(os.Interrupt)` + `select` 双通道消费 events/sigCh。弃用 raw mode + ESC 方案 |
+| Interrupt 端点 | `src/server/server.go` | `POST /session/interrupt` → `voyage.DeleteState(id)` |
+| DeleteState | `src/voyage/voyage.go` | 删 state.json，不存在忽略 |
+| askCLI 三态 | `src/cli/ask.go` | approve / deny / interrupt（输入 `stop` 或 `/interrupt`） |
+| interruptSession | `src/cli/crud.go` | 客户端方法，调 `/interrupt` 端点 |
 
-## 本次会话成果（2026-07-13 后半）
+### Asking 延迟持久化
 
-### Tale 引入 + 架构精简
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| PendingMessages | `src/voyage/voyage.go` | Voyage 新增字段，Asking 时暂存未落盘的 user + assistant(tool_calls) |
+| 去 checkpoint | `src/helm/phase_asking.go` | 不调 `checkpoint(v)`，改为 `v.PendingMessages = v.Tale().Unsaved()` |
+| AppendMessages | `src/tale/tale.go` | 新方法，追加消息不改变持久化游标 |
+| LoadState 恢复 | `src/voyage/voyage.go` | 反序列化后将 PendingMessages 恢复到 Tale |
 
-| 变更 | 说明 |
-|------|------|
-| `src/tale/tale.go` | 新建。Tale 封装 Messages + Saved 游标：`AppendUser/Assistant/Tool` + `BuildRequest` + `Unsaved/MarkSaved` |
-| Voyage 去接口 | `Voyage interface` 删除，`*Voyage` 直接使用（内部变化性由 Vault/Gate 覆盖） |
-| Session → Voyage | `Session` 改名 `Voyage`，`SessionInfo` → `Info`，包级函数改短名（`New`/`Resume`/`List`/`Delete`/`RenameByID`） |
-| HelmState 删除 | `src/helm/helm_state.go` 删除。Phase/Model/ToolUses/Saved 并入 Voyage，Phase 常量移入 voyage 包 |
-| Tale 归 Voyage | Tale 由 Voyage 构造时从 Vault 加载创建，`AppendMessages` 内化 `vault.MessagesToRecords` + `MarkSaved` |
-| SaveState/LoadState | Voyage 自管理控制流持久化，游标自动同步 |
-| PhaseRunner 返回值 | `Run(ctx, v, emit) bool`：`true`=goroutine 退出，`false`=继续循环 |
-| checkpoint 单参数 | `checkpoint(v)`，不再传 `st *HelmState` |
+### 会话历史
 
-### 文档更新
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| ResumeSessionResponse | `src/server/types.go` | 新增 Messages 字段，`/session/resume` 返回完整对话 |
+| 历史展示 | `src/cli/session_pick.go` | 恢复已有会话时展示对话历史（截断 200 字符） |
 
-- `docs/decisions.md` — DEC-038：Voyage 单一聚合体
-- `docs/voyage/design.md` — 重写
-- `docs/architecture.md` — Voyage/helm 描述、数据流、代码目录同步
-
-## 新增设计决策
+### 新增设计决策
 
 | 决策 | 说明 |
 |------|------|
-| DEC-038 | Voyage 单一聚合体——去接口 + Session 改名 + HelmState 合并 + Tale 归属。PhaseRunner 统一签名 |
-| `RuleIron` / `RuleCord` | 规则类型枚举（Iron=红线、Cord=可配置），零值无意义 |
-| `RuleLoader.Load()` | 只在 `NewWarden` 构造时调用一次，`Evaluate` 只读 |
-| `Warden` 零规则 | 不内联任何规则，所有规则由 `...RuleLoader` 注入 |
-| `Provider` 接口 | `Name()` / `Model()` / `Chat(ctx, messages, tools)` |
-| `ProviderConfig.API` 字段 | 显式声明协议（`"openai-completions"` 或空默认） |
-| `SessionOption` | Vault/Gate 注入用 functional options |
-| Provider 在 `Run()` 中创建 | `PhaseRunnerModel.Run()` 内部调 `sail.NewProvider(st.Model)` |
+| DEC-039 | Signal 中断——Ctrl+C 截获触发 agent loop 终止，不用 raw mode + ESC |
+| DEC-040 | Asking 延迟持久化——PhaseAsking 不写 vault，PendingMessages 暂存 state.json |
 
-## 改造计划 — 第一阶段剩余
+### 文档更新
 
-| # | 改造项 | 涉及文件 |
-|---|--------|---------|
-| 7 | `crew` 模块实现 | 新建 `src/crew/` |
-| 8 | `AgentService` 抽象 | 新建，`src/server/prompt.go` handler 瘦身 |
-| 9 | Asking reply channel | `src/voyage/voyage.go`、`src/server/` |
+| 文档 | 变更 |
+|------|------|
+| `docs/decisions.md` | +DEC-039、DEC-040 |
+| `docs/voyage/design.md` | PendingMessages、中断回滚、DeleteState |
+| `docs/modules/helm/design.md` | 全文重写：新签名、Asking 流程、中断机制 |
+| `docs/modules/server/design.md` | 全文重写：`/interrupt` 端点、ResumeSessionResponse |
+| `docs/architecture.md` | 中断流程（运行中 + Asking） |
 
-## 已知残留问题
+### 未 commit
+
+所有代码变更和文档更新均未提交，在 working tree 中。
+
+## 已知残留问题（从前期继承）
 
 | 问题 | 位置 | 说明 |
 |------|------|------|
-| 死代码 `sail.Chat()` 包级函数 | `src/sail/sail.go` | 已由用户清理 |
-| 死代码 `sail.Window()` | `src/sail/sail.go:218` | 0 调用者，依赖 `knot.LookupModel()` |
+| 死代码 `sail.Window()` | `src/sail/sail.go:218` | 0 调用者 |
 | `http.DefaultClient` 残留 | `src/sail/adapter.go:315`、`src/deck/builtin_tool.go:611,674` | 不走 ProviderOpenAI 路径 |
 | `NewProviderOpenAI` 冗余参数 | `src/sail/sail.go` | messages/tools 参数已无意义 |
-| 旧 `Sail` 接口 | `src/sail/sail.go:16` | 0 外部调用者，Provider 接口已替代 |
-| `knot.LookupModel()` | `src/knot/config.go:150` | 仅被 `sail.Window()` 调用，随 Window 一起删 |
+| 旧 `Sail` 接口 | `src/sail/sail.go:16` | 0 外部调用者 |
+| `knot.LookupModel()` | `src/knot/config.go:150` | 仅被 `sail.Window()` 调用 |
 
-## 正在进行：interrupt 能力
+## 待办清单
 
-### 目标
-
-用户可随时终止正在运行的 agent loop（`helm.Run()` goroutine）。
-
-### 方案（已讨论，待实施）
-
-```
-Server
-  + interrupts map[string]context.CancelFunc    ← sessionID → cancel
-  + POST /session/interrupt {sessionID}          ← 新端点
-
-handlePrompt
-  ctx, cancel := context.WithCancel(context.Background())  ← 不绑 request 生命周期
-  s.interrupts[sessionID] = cancel
-  defer delete(s.interrupts, sessionID) + cancel
-  events := helm.Run(ctx, v)                     ← 传可取消 ctx
-
-helm.Run
-  每轮循环前检查 ctx.Done() → checkpoint + SaveState + return
-
-PhaseRunnerModel.Run
-  事件流结束后检查 ctx.Done() → 跳过 AppendAssistant（LLM 被中断时不写入不完整回复）
-```
-
-### 中断时点
-
-| 时点 | 行为 |
-|------|------|
-| Model 阶段（LLM 流式中） | ctx 取消 → HTTP body 关闭 → 事件流终止 → 检测 ctx.Done() → 不追加 assistant → exit |
-| ExecTools 阶段 | tool.Execute(ctx) 收到取消 → 返回 error → run.go 检测 ctx.Done() → exit |
-| Asking 阶段 | goroutine 已退出，无需中断 |
-
-### 未决问题
-
-- 中断后是否保留部分文本回复（当前方案：不保留，ctx.Done() 后跳过 AppendAssistant）
-- interrupt 端点是否需要权限校验（当前无）
-- 是否需要 CLI 快捷键（Ctrl+C）触发 interrupt
+| # | 任务 | 复杂度 | 说明 |
+|---|------|--------|------|
+| 9 | **Asking 不断连** | 中 | 当前 goroutine 退出 + 客户端走新 HTTP 请求。改为同 SSE 连接内收 verdicts |
+| 10 | **reef compact** | 高 | Tale 消息裁剪 + LLM 摘要 + 上下文重组。当前是桩。规约见 `docs/modules/reef/what.md` |
+| 7 | **crew** | 高 | SKILL.md 扫描 + 渐进式披露 |
+| 8 | **AgentService** | 中 | `src/server/prompt.go` handler 瘦身 |
 
 ## 未来可做
 

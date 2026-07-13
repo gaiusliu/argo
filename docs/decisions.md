@@ -720,3 +720,40 @@ scanner.Scan() 内部调用 Read()  ← transport.go:3064
 - Tale 归 HelmState — 被否决，HelmState 每请求重建而 Tale 应与 Session 同生命周期
 - 保留 Voyage 接口 — 被否决，无多实现需求，预埋接口是过度设计
 - HelmState 独立存在 — 被否决，与 Voyage 生命周期一致，双对象传参增加复杂度
+
+## DEC-039：Signal 中断——Ctrl+C 截获触发 agent loop 终止
+
+**状态**：✅ 现行
+
+**日期**：2026-07-14
+
+**决策**：CLI 通过 `signal.Notify(os.Interrupt)` 截获 Ctrl+C，不杀进程而是取消 context，触发 server 端 `helm.Run` goroutine 退出。不采用 raw mode + ESC key 方案。
+
+**背景**：用户需要在 agent loop 运行中（LLM 流式输出或工具执行期间）终止操作。两个候选：A) 终端 raw mode 监听 ESC 按键；B) 截获 Ctrl+C 信号。
+
+选择 B。raw mode 方案在 Windows 上需要 `golang.org/x/term`，引入额外依赖和 stdin 多 goroutine 竞争问题。Signal 方案零依赖、零终端 hack，`select { case ev := <-events: case <-sigCh: cancel() }` 即可。
+
+**具体变更**：
+- `main.go`：`signal.Notify(sigCh, os.Interrupt)`，eventLoop 用 `select` 同时监听 events 和 sigCh
+- `run.go`：每轮循环前检查 `ctx.Done()`
+- 中断时不调 checkpoint，内存态丢弃，下次 Resume 自动回到上一断点
+
+**替代方案**：raw mode + ESC — 因终端 hack 复杂度、Windows 兼容性、stdin 竞争被否决。
+
+## DEC-040：Asking 延迟持久化——PhaseAsking 不写 vault，PendingMessages 暂存 state.json
+
+**状态**：✅ 现行
+
+**日期**：2026-07-14
+
+**决策**：PhaseAsking 阶段不调 `checkpoint()`（不写 vault）。本轮尚未落盘的 user + assistant(tool_calls) 以 `PendingMessages` 字段存入 state.json。PhaseDone 时一次性写完整对话。中断时只需删 state.json 即可干净回滚。
+
+**背景**：旧代码在 PhaseAsking 时调 `checkpoint(v)` 将 user + assistant(tool_calls) 写入 vault。用户若此时 `/interrupt` 终止，vault 中残留孤立的 assistant(tool_calls) 记录，LLM 报错。需要一种让中断能干净回滚的持久化策略。
+
+**具体变更**：
+- `phase_asking.go`：删除 `checkpoint(v)`，改为 `v.PendingMessages = v.Tale().Unsaved()` + `v.SaveState()`
+- `voyage.go`：`Voyage` 新增 `PendingMessages []knot.Message` 字段；`LoadState` 后恢复进 Tale
+- `tale.go`：新增 `AppendMessages(msgs)` 方法，追加消息但不改变持久化游标
+- `interrupt` 端点：删 state.json → PendingMessages 丢失 → Resume 回到断点前
+
+**替代方案**：vault mark & rollback — 需要在 vault 中实现 truncation，复杂度高，被否决。

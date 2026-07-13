@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"strings"
 
 	"argo/src/brig"
@@ -56,13 +57,26 @@ func main() {
 	stdin := bufio.NewReader(os.Stdin)
 
 	// 列出最近会话，让用户选择或创建
-	sessionID, err := pickOrCreateSession(client, stdin)
+	sessionID, isExisting, err := pickOrCreateSession(client, stdin)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ 会话初始化失败: %v\n", err)
 		os.Exit(1)
 	}
 
+	// 恢复已有会话时展示对话历史
+	if isExisting {
+		resp, err := client.resumeSession(sessionID)
+		if err == nil && len(resp.Messages) > 0 {
+			showMessages(resp.Messages)
+		}
+	}
+
 	seenTools := make(map[string]bool)
+
+	// Ctrl+C 不再杀进程，改为中断信号
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
 
 	// REPL 主循环
 	for {
@@ -96,75 +110,81 @@ func main() {
 			fmt.Fprintf(os.Stderr, "❌ 发送失败: %v\n", err)
 			continue
 		}
-		defer cancel()
 
-		// 消费 SSE 事件流
+		// SSE 事件消费（同时监听 Ctrl+C 中断）
 	eventLoop:
 		for {
-			ev, ok := <-events
-			if !ok {
-				break
-			}
-
-			switch ev.Type {
-			case knot.EventTextDelta:
-				fmt.Print(ev.Delta)
-
-			case knot.EventTextDone:
-				fmt.Println()
-
-			case knot.EventThinkingStart:
-				fmt.Println("\n── 💭思考中 ──")
-
-			case knot.EventThinkingDelta:
-				fmt.Print(ev.Delta)
-
-			case knot.EventThinkingDone:
-				fmt.Println("\n── 💭思考完成 ──")
-
-			case knot.EventToolUseStart:
-				if ev.ToolUse.ID != "" && !seenTools[ev.ToolUse.ID] {
-					seenTools[ev.ToolUse.ID] = true
-					showToolStart(ev)
-				}
-
-			case knot.EventToolUseDone:
-				delete(seenTools, ev.ToolUse.ID)
-				showToolDone(ev)
-
-			case knot.EventAsk:
-				var tus []knot.ToolUse
-				for _, tu := range ev.AskingToolUses {
-					approve := askCLI(stdin, tu)
-					if approve {
-						tu.VerdictResult = brig.UserApprove
-					} else {
-						tu.VerdictResult = brig.UserDeny
-					}
-
-					tus = append(tus, tu)
-				}
-
-				clear(seenTools)
-
-				// Ask 后 server 端 goroutine 已退出、连接已关闭，
-				// 此处 cancel 确保客户端旧 body 资源释放，
-				// 然后通过 sendAskReply 发起新连接继续消费。
-				cancel()
-				events, cancel, err = client.sendAskReply(sessionID, tus)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "❌ 回复失败: %v\n", err)
+			select {
+			case ev, ok := <-events:
+				if !ok {
+					cancel()
 					break eventLoop
 				}
+				switch ev.Type {
+				case knot.EventTextDelta:
+					fmt.Print(ev.Delta)
+				case knot.EventTextDone:
+					fmt.Println()
+				case knot.EventThinkingStart:
+					fmt.Println("\n── 💭思考中 ──")
+				case knot.EventThinkingDelta:
+					fmt.Print(ev.Delta)
+				case knot.EventThinkingDone:
+					fmt.Println("\n── 💭思考完成 ──")
+				case knot.EventToolUseStart:
+					if ev.ToolUse.ID != "" && !seenTools[ev.ToolUse.ID] {
+						seenTools[ev.ToolUse.ID] = true
+						showToolStart(ev)
+					}
+				case knot.EventToolUseDone:
+					delete(seenTools, ev.ToolUse.ID)
+					showToolDone(ev)
+				case knot.EventAsk:
+					var tus []knot.ToolUse
+					interrupted := false
+					for _, tu := range ev.AskingToolUses {
+						verdict := askCLI(stdin, tu)
+						if verdict == verdictInterrupt {
+							interrupted = true
+							break
+						}
+						if verdict == verdictApprove {
+							tu.VerdictResult = brig.UserApprove
+						} else {
+							tu.VerdictResult = brig.UserDeny
+						}
+						tus = append(tus, tu)
+					}
 
-			case knot.EventError:
-				clear(seenTools)
-				fmt.Fprintf(os.Stderr, "\n❌ 错误: %v\n", ev.Err)
+					clear(seenTools)
+					cancel()
 
-			case knot.EventDone:
-				clear(seenTools)
+					if interrupted {
+						client.interruptSession(sessionID)
+						fmt.Fprintf(os.Stderr, "\n⏹ 会话已终止\n")
+						break eventLoop
+					}
+
+					events, cancel, err = client.sendAskReply(sessionID, tus)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "❌ 回复失败: %v\n", err)
+						break eventLoop
+					}
+
+				case knot.EventError:
+					clear(seenTools)
+					fmt.Fprintf(os.Stderr, "\n❌ 错误: %v\n", ev.Err)
+				case knot.EventDone:
+					clear(seenTools)
+				}
+
+			case <-sigCh:
+				cancel()
+				fmt.Fprintf(os.Stderr, "\n⏹ 已中断\n")
+				break eventLoop
 			}
 		}
+		cancel()
 	}
 }
 

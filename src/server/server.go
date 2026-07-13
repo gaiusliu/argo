@@ -108,7 +108,16 @@ func (s *Server) handleResumeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, GetSessionResponse{SessionInfo: ToSessionInfoJSON(v.Info)})
+	msgs, err := v.Vault.Load()
+	if err != nil {
+		http.Error(w, "load messages: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, ResumeSessionResponse{
+		SessionInfo: ToSessionInfoJSON(v.Info),
+		Messages:    msgs,
+	})
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {

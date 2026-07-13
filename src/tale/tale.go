@@ -55,6 +55,12 @@ func (t *Tale) Unsaved() []knot.Message {
 	return t.messages[t.saved:]
 }
 
+// AppendMessages 直接追加消息切片，不改变持久化游标。
+// 用于从 state.json 恢复尚未落盘的 PendingMessages。
+func (t *Tale) AppendMessages(msgs []knot.Message) {
+	t.messages = append(t.messages, msgs...)
+}
+
 // MarkSaved 将当前全部消息标记为已持久化。
 func (t *Tale) MarkSaved() {
 	t.saved = len(t.messages)

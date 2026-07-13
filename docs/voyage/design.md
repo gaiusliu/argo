@@ -15,6 +15,7 @@ Voyage
 ├── Phase int              ← 状态机当前阶段
 ├── Model string           ← 当前模型名
 ├── ToolUses []ToolUse      ← 本回合待执行的工具调用（含裁决/结果）
+├── PendingMessages []Message ← Asking 阶段暂存未落盘消息（user + assistant(tool_calls)）
 └── Saved int              ← 持久化游标桥梁（SaveState/LoadState 时与 Tale 同步）
 ```
 
@@ -52,9 +53,22 @@ Voyage
 
 ### 控制流持久化
 
-`SaveState()`：序列化前从 Tale 同步游标（`v.Saved = v.tale.Saved()`），将 Phase/Model/ToolUses/Saved 写入 `state.json`。Ask/Done 断点时调用。
+`SaveState()`：序列化前从 Tale 同步游标（`v.Saved = v.tale.Saved()`），将完整 Voyage 序列化写入 `state.json`。Ask/Done 断点时调用。Asking 阶段额外包含 `PendingMessages`（尚未落盘的 user + assistant(tool_calls)），供 LoadState 恢复。
 
-`LoadState()`：从 `state.json` 反序列化，恢复游标到 Tale（`v.tale.SetSaved(v.Saved)`）。Ask 回复路径用。
+`LoadState()`：从 `state.json` 反序列化 Voyage，恢复游标到 Tale（`v.tale.SetSaved(v.Saved)`），并将 `PendingMessages` 通过 `tale.AppendMessages()` 恢复到对话历史中。Ask 回复路径用。
+
+`DeleteState(id)`：删除 `state.json`。中断时调用——PendingMessages 随文件一起丢失，下次 Resume 自然回到上一 checkpoint。
+
+### 中断回滚
+
+```
+中断（Ctrl+C 或 /interrupt）:
+  vault:      [history...]              ← 干净
+  state.json: {Pendings=[user,工具调用]} ← 删掉
+  → Resume 从 vault 加载 → 回到断点前
+```
+
+核心原则：中断时不调 checkpoint，不写 vault。Asking 阶段的 PendingMessages 只存 state.json，删文件即回滚。
 
 ### 对话记录持久化
 
@@ -83,3 +97,5 @@ Voyage
 - **HelmState 并入**：生命周期一致，分开只增复杂度（[DEC-038](/docs/decisions.md#dec-038voyage-单一聚合体去接口--session-改名--helmstate-合并--tale-归属)）
 - **AppendMessages 内化**：`vault.MessagesToRecords` 调用收敛于 Voyage，helm 不再 import vault
 - **SaveState/LoadState**：游标同步封装在 Voyage 内部，调用者不传来传去
+- **Asking 延迟持久化**：PhaseAsking 不写 vault，PendingMessages 暂存 state.json，中断时删除即可回滚（[DEC-040](/docs/decisions.md#dec-040asking-延迟持久化phaseasking-不写-vaultpendingmessages-暂存-statejson)）
+- **DeleteState**：删除 state.json，用于 Asking 阶段终止和中断回滚

@@ -89,9 +89,10 @@ type ListSessionsResponse struct {
 	SessionInfos []SessionInfoJSON `json:"sessions"`
 }
 
-// GetSessionResponse POST /session/resume 响应体。
-type GetSessionResponse struct {
+// ResumeSessionResponse POST /session/resume 响应体。
+type ResumeSessionResponse struct {
 	SessionInfo SessionInfoJSON `json:"session"`
+	Messages    []knot.Message  `json:"messages"`
 }
 
 // DeleteSessionResponse DELETE /session/{id} 响应体。

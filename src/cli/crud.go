@@ -22,13 +22,19 @@ func (c *argoClient) listSessions() ([]server.SessionInfoJSON, error) {
 }
 
 // resumeSession 恢复指定会话，返回其元数据。
-func (c *argoClient) resumeSession(id string) (*server.GetSessionResponse, error) {
-	var resp server.GetSessionResponse
+func (c *argoClient) resumeSession(id string) (*server.ResumeSessionResponse, error) {
+	var resp server.ResumeSessionResponse
 	req := server.ResumeSessionRequest{SessionID: id}
 	if err := c.postJSON("/session/resume", req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// interruptSession 发送中断请求，删除控制流状态文件。
+func (c *argoClient) interruptSession(id string) error {
+	req := server.InterruptRequest{SessionID: id}
+	return c.postJSON("/session/interrupt", req, nil)
 }
 
 // deleteSession 删除指定会话。

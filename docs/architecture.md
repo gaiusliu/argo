@@ -70,13 +70,35 @@ helm.Run() goroutine 循环：
   │   └─ 全部完成 → Phase = Model（循环）
   │
   ├─ PhaseAsking ──────── PhaseRunnerAsking（return true）
-  │   └─ checkpoint + SaveState → goroutine 退出
+  │   └─ PendingMessages + SaveState（不写 vault） → goroutine 退出
   │
   └─ PhaseDone ────────── PhaseRunnerDone（return true）
       └─ checkpoint → goroutine 退出
 ```
 
 所有事件通过 `<-chan knot.Event` 流式发出，server 以 SSE 格式转发给 CLI。
+
+## 中断流程
+
+### 运行中中断（Ctrl+C）
+
+```
+CLI: Ctrl+C → signal.Notify → cancel()
+  → server: ctx.Done → helm.Run goroutine 退出
+  → 不调 checkpoint，内存态丢弃
+  → 下次 Resume 从 vault 加载 → 回到上一断点
+```
+
+### Asking 阶段终止（/interrupt）
+
+```
+CLI: /interrupt 输入 → POST /session/interrupt
+  → server: DeleteState(sessionID) → 删 state.json
+  → PendingMessages（user + assistant(tool_calls)）随文件丢失
+  → 下次 Resume 从 vault 加载 → 回到断点前干净状态
+```
+
+参考 [DEC-039](/docs/decisions.md#dec-039signal-中断ctrlc-截获触发-agent-loop-终止) 和 [DEC-040](/docs/decisions.md#dec-040asking-延迟持久化phaseasking-不写-vaultpendingmessages-暂存-statejson)。
 
 ## 会话目录结构
 

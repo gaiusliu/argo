@@ -6,13 +6,16 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"argo/src/knot"
 )
 
 // pickOrCreateSession 展示最近会话列表，让用户选择或新建。
-func pickOrCreateSession(c *argoClient, stdin *bufio.Reader) (string, error) {
+// 返回 sessionID、是否为已有会话（而非新建）。
+func pickOrCreateSession(c *argoClient, stdin *bufio.Reader) (string, bool, error) {
 	sessions, err := c.listSessions()
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
 	if len(sessions) > 0 {
@@ -31,30 +34,38 @@ func pickOrCreateSession(c *argoClient, stdin *bufio.Reader) (string, error) {
 		}
 		fmt.Fprintf(os.Stderr, "──────────────\n")
 
-		// 用户输入序号选择已有会话，或 n 新建
 		fmt.Fprintf(os.Stderr, "输入序号恢复 / n 新建: ")
 		input, _ := stdin.ReadString('\n')
 		input = strings.TrimSpace(input)
 
 		if input != "" && strings.ToLower(input) != "n" {
 			if idx, err := strconv.Atoi(input); err == nil && idx >= 1 && idx <= len(show) {
-				id := show[idx-1].ID
-				fmt.Fprintf(os.Stderr, "已恢复会话: %s\n", id)
-				return id, nil
+				return show[idx-1].ID, true, nil // 已有会话
 			}
 		}
 	}
 
-	// 获取当前工作目录
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
 	id, err := c.createSession(cwd)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	fmt.Fprintf(os.Stderr, "会话已创建: %s\n", id)
-	return id, nil
+	return id, false, nil // 新会话
+}
+
+// showMessages 展示对话历史，每条消息截断超过 200 字符的内容。
+func showMessages(msgs []knot.Message) {
+	for _, m := range msgs {
+		role := string(m.Role)
+		content := m.Content
+		if len(content) > 200 {
+			content = content[:200] + "..."
+		}
+		fmt.Fprintf(os.Stderr, "  [%s] %s\n", role, content)
+	}
 }

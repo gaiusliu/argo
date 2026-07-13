@@ -44,10 +44,11 @@ type Voyage struct {
 	tale  *tale.Tale // 对话历史内存态
 
 	// 状态机控制流（原 HelmState 字段）
-	Phase    int
-	Model    string
-	ToolUses []knot.ToolUse
-	Saved    int // 持久化游标（SaveState/LoadState 时与 Tale 同步）
+	Phase           int
+	Model           string
+	ToolUses        []knot.ToolUse
+	Saved           int            // 持久化游标（SaveState/LoadState 时与 Tale 同步）
+	PendingMessages []knot.Message // Asing 阶段尚未落盘的消息（user + assistant）
 }
 
 // Option 函数选项，用于注入 Vault / Gate 等依赖。
@@ -199,6 +200,11 @@ func (v *Voyage) LoadState() error {
 	}
 	// 恢复游标到 Tale
 	v.tale.SetSaved(v.Saved)
+	// 将 PendingMessages（user + assistant）恢复到 Tale 中
+	if len(v.PendingMessages) > 0 {
+		v.tale.AppendMessages(v.PendingMessages)
+		v.PendingMessages = nil
+	}
 	return nil
 }
 

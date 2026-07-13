@@ -2,13 +2,11 @@ package sail
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 
@@ -57,44 +55,6 @@ type openAIMsg struct {
 	Content    string           `json:"content"`
 	ToolCallID string           `json:"tool_call_id,omitempty"`
 	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
-}
-
-// buildOpenAIBody 将 knot.ChatRequest 转为 OpenAI JSON 请求体
-func buildOpenAIBody(req knot.ChatRequest, modelName string) ([]byte, error) {
-	msgs := make([]openAIMsg, len(req.Messages))
-	for i, m := range req.Messages {
-		msg := openAIMsg{Role: string(m.Role), Content: m.Content, ToolCallID: m.ToolCallID}
-		if len(m.ToolCalls) > 0 {
-			tcs := make([]openAIToolCall, len(m.ToolCalls))
-			for j, tc := range m.ToolCalls {
-				tcs[j] = openAIToolCall{
-					ID: tc.ID, Type: "function",
-					Function: openAIToolCallFn{Name: tc.Name, Arguments: tc.Arguments},
-				}
-			}
-			msg.ToolCalls = tcs
-		}
-		msgs[i] = msg
-	}
-	// 转换 knot.Tool → openAITool
-	tools := make([]openAITool, 0, len(req.Tools))
-	for _, t := range req.Tools {
-		tools = append(tools, openAITool{
-			Type: "function",
-			Function: openAIToolFunc{
-				Name:        t.Name(),
-				Description: t.Description(),
-				Parameters:  t.ParametersSchema(),
-			},
-		})
-	}
-	body := openAIReq{
-		Model:    modelName,
-		Messages: msgs,
-		Stream:   true,
-		Tools:    tools,
-	}
-	return json.Marshal(body)
 }
 
 // openAIChunk OpenAI Chat Completions SSE chunk 的 JSON 映射
@@ -279,81 +239,4 @@ func parseSSE(ctx context.Context, respBody io.ReadCloser, out chan<- knot.Event
 	if err := ctx.Err(); err != nil {
 		out <- knot.Event{Type: knot.EventError, Err: fmt.Errorf("sail: sse ctx: %w", err)}
 	}
-}
-
-// doChat 构造请求体 → HTTP POST（含重试） → goroutine 解析 SSE → 返回事件 channel
-func doChat(ctx context.Context, apiKey, baseURL, modelName string, req knot.ChatRequest) (<-chan knot.Event, error) {
-	body, err := buildOpenAIBody(req, modelName)
-	if err != nil {
-		return nil, fmt.Errorf("sail: build body: %w", err)
-	}
-
-	const maxRetries = 3
-	var retryDelay time.Duration // 下次重试前的等待时间
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		// 统一退避：429 Retry-After 优先，否则指数退避 1s/2s/4s
-		if retryDelay > 0 {
-			select {
-			case <-time.After(retryDelay):
-			case <-ctx.Done():
-				out := make(chan knot.Event, 1)
-				out <- knot.Event{Type: knot.EventError, Err: &APIError{Code: "network", Message: ctx.Err().Error()}}
-				close(out)
-				return out, nil
-			}
-		}
-
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewReader(body))
-		// defer cancel()
-		if err != nil {
-			return nil, fmt.Errorf("sail: new request: %w", err)
-		}
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-		httpReq.Header.Set("Content-Type", "application/json")
-
-		resp, err := http.DefaultClient.Do(httpReq)
-		if err != nil {
-			// 网络错误可重试
-			if attempt < maxRetries-1 {
-				retryDelay = time.Duration(1<<attempt) * time.Second
-				continue
-			}
-			ae := &APIError{Code: "network", Retryable: true, Message: err.Error()}
-			out := make(chan knot.Event, 1)
-			out <- knot.Event{Type: knot.EventError, Err: ae}
-			close(out)
-			return out, nil
-		}
-
-		// 200 → 解析 SSE 流
-		if resp.StatusCode == http.StatusOK {
-			out := make(chan knot.Event, 8)
-			go parseSSE(ctx, resp.Body, out)
-			return out, nil
-		}
-
-		// 非 200 → 读 body + 分类
-		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		ae := classifyError(resp.StatusCode, respBody, resp.Header)
-		slog.Error("doChat failed", "error", ae, "base url", baseURL)
-		if !ae.Retryable || attempt >= maxRetries-1 {
-			out := make(chan knot.Event, 1)
-			out <- knot.Event{Type: knot.EventError, Err: ae}
-			close(out)
-			return out, nil
-		}
-		// 设置下次退避：429 用 Retry-After，否则指数退避
-		if ae.RetryAfterSeconds > 0 {
-			retryDelay = time.Duration(ae.RetryAfterSeconds) * time.Second
-		} else {
-			retryDelay = time.Duration(1<<attempt) * time.Second
-		}
-	}
-
-	out := make(chan knot.Event, 1)
-	out <- knot.Event{Type: knot.EventError, Err: &APIError{Code: "server_error", Retryable: false, Message: "重试次数已耗尽"}}
-	close(out)
-	return out, nil
 }

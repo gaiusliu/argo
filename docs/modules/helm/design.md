@@ -2,127 +2,97 @@
 
 ## 概述
 
-helm 是 Argo 的 Agent 核心循环。基于状态机模型驱动 "LLM 调用 → 工具执行 → 循环" 的 ReAct 链路。HelmState 仅持有控制流字段，对话历史由 Vault（transcript.jsonl）管理。brig.Guard 在工具执行前做权限门控，EventAsk 通过 SSE 与调用方交互（DEC-031、DEC-035）。
+helm 是 Argo 的 Agent 核心循环，基于状态机驱动 "LLM 调用 → 工具执行 → 循环" 的 ReAct 链路。控制流状态和对话历史全部归属 Voyage（[DEC-038](/docs/decisions.md#dec-038voyage-单一聚合体去接口--session-改名--helmstate-合并--tale-归属)）。
 
 ## 核心概念
 
 | 概念 | 说明 |
 |------|------|
-| Phase | 状态机阶段常量：HelmPhaseModel / HelmPhaseExecTools / HelmPhaseAsking / HelmPhaseDone |
-| HelmState | 控制流状态结构体，可 JSON 序列化持久化到 state.json（Messages 字段不持久化） |
-| Run | 状态机入口函数，goroutine 内循环执行各 Phase 直至 Asking 或 Done 退出 |
-| PhaseRunner | 阶段执行器接口，4 个实现：PhaseRunnerModel / PhaseRunnerExecTools / PhaseRunnerAsking / PhaseRunnerDone |
-| newRunner | 工厂函数，按 Phase 值返回对应的 PhaseRunner 实现 |
-| checkpoint | 断点持久化函数，增量写入 transcript + 审批记录，在 Asking / Done 阶段调用 |
+| Phase | 状态机阶段常量（定义在 voyage 包）：`PhaseModel` / `PhaseExecTools` / `PhaseAsking` / `PhaseDone` |
+| Run | 状态机入口：`func Run(ctx, v) <-chan knot.Event`。内部 goroutine 循环执行各 Phase |
+| PhaseRunner | 阶段执行器接口：`Run(ctx, v, emit) bool`，返回 `true`=goroutine 退出 |
+| newRunner | 工厂函数，按 Phase 值返回对应的 PhaseRunner |
+| checkpoint | Done 阶段的断点持久化：增量写 vault + 审批记录。Asking 阶段**不调** checkpoint |
 
-## HelmState 字段
-
-| 字段 | 说明 |
-|------|------|
-| Phase | 当前阶段（HelmPhaseModel=1, ExecTools=2, Asking=3, Done=4） |
-| Model | 当前使用的模型名 |
-| ToolUses | 当前轮次 LLM 返回的工具调用列表（含执行结果和 verdict） |
-| Saved | 已持久化到 transcript.jsonl 的消息游标：Messages[:Saved] 已在 transcript，Messages[Saved:] 待写入 |
-| Messages | 完整对话历史，`json:"-"` 不持久化到 state.json（transcript.jsonl 是唯一持久化来源） |
-
-## 流程
-
-### Phase 流转
+## Phase 流转
 
 ```
-HelmPhaseModel
+PhaseModel
   │
-  ├─ 无工具调用 → HelmPhaseDone
+  ├─ 无工具调用 → PhaseDone
   │
-  └─ 有工具调用 → HelmPhaseExecTools
+  └─ 有工具调用 → PhaseExecTools
                     │
-                    ├─ 全部执行完成 → HelmPhaseModel（循环）
+                    ├─ 全部执行完成 → PhaseModel（循环）
                     │
-                    └─ 遇 Ask → HelmPhaseAsking → goroutine 退出
+                    └─ 遇 Ask → PhaseAsking → goroutine 退出
                                                      │
                                              外部填充 ToolUseVerdicts 后 Run() 重入
                                                      │
-                                             HelmPhaseExecTools（继续执行）
+                                             PhaseExecTools（继续执行）
 ```
 
-### Run() 签名
+## Run() 签名
 
+```go
+func Run(ctx context.Context, v *voyage.Voyage) <-chan knot.Event
 ```
-Run(ctx context.Context, st *HelmState, session voyage.Voyage) <-chan knot.Event
-```
 
-- 内部启动 goroutine，通过 `for` 循环依次执行各 Phase
-- 返回带缓冲的 `<-chan knot.Event`（`make(chan knot.Event, 16)`），调用方通过 SSE 转发
-- Asking 或 Done 阶段 goroutine 退出，等待外部 HTTP 请求再次驱动
+- 内部启动 goroutine，`for` 循环依次执行各 Phase
+- 每轮循环前检查 `ctx.Done()`——中断（Ctrl+C）时直接退出，不调 checkpoint
+- 返回 `make(chan knot.Event, 16)`，调用方通过 SSE 转发
 
-### PhaseRunner 接口
+## PhaseRunner 接口
 
-```
+```go
 type PhaseRunner interface {
-    Run(ctx context.Context, st *HelmState, emit func(knot.Event), session voyage.Voyage)
+    Run(ctx context.Context, v *voyage.Voyage, emit func(knot.Event)) bool
 }
 ```
 
 | 实现 | Phase | 职责 |
 |------|-------|------|
-| PhaseRunnerModel | HelmPhaseModel | 构建 system prompt + 调用 LLM + 收集 tool_calls，流转到 ExecTools 或 Done |
-| PhaseRunnerExecTools | HelmPhaseExecTools | 逐条 brig 门控 + 工具执行，遇 Ask 流转到 Asking |
-| PhaseRunnerAsking | HelmPhaseAsking | checkpoint 落盘 + Save HelmState → goroutine 退出等待外部回复 |
-| PhaseRunnerDone | HelmPhaseDone | checkpoint 落盘 → goroutine 退出 |
+| PhaseRunnerModel | PhaseModel | 调用 LLM，收集 tool_calls，追加 assistant 到 Tale |
+| PhaseRunnerExecTools | PhaseExecTools | brig 门控 + 工具执行 + 追加 tool 结果到 Tale |
+| PhaseRunnerAsking | PhaseAsking | 设置 PendingMessages → SaveState → goroutine 退出 |
+| PhaseRunnerDone | PhaseDone | checkpoint（写 vault + 审批） → goroutine 退出 |
 
-### checkpoint 机制
+## Asking 延迟持久化
 
-checkpoint() 在 Asking 和 Done 两个终点阶段被调用，执行两次持久化：
+Asking 阶段**不调 checkpoint**（不写 vault）。本轮尚未落盘的 user + assistant(tool_calls) 以 `PendingMessages` 存入 state.json。PhaseDone 时一次性写完整对话。
 
-1. **增量写入 transcript**：`vault.MessagesToRecords(Messages[Saved:], …)` → `session.Append()`
-2. **审批记录**：`voyage.SaveApprovals(session)` → `approvals.json`
+```
+PhaseAsking:
+  v.PendingMessages = v.Tale().Unsaved()   ← user + assistant(tool_calls)
+  v.Phase = PhaseExecTools
+  v.SaveState()                            ← state.json 含 PendingMessages
 
-写入失败不阻塞流程，仅 slog.Error 记录。
+中断 / /interrupt:
+  DeleteState(id) → state.json 删 → Resume 回到断点前
 
-### 写入时机
+Ask 回复:
+  LoadState → PendingMessages 恢复进 Tale → exec tools → Model → Done
+  checkpoint → 完整对话写入 vault
+```
 
-| 消息类型 | 写入点 |
-|---------|--------|
-| user | handlePrompt 入口追加到 st.Messages，checkpoint 时增量写入 |
-| assistant | PhaseRunnerModel.Run 结束后追加到 st.Messages |
-| tool | PhaseRunnerExecTools.Run 每条执行完追加到 st.Messages |
-| 全部持久化 | checkpoint() 统一增量写入（Asking / Done 阶段） |
+参考 [DEC-040](/docs/decisions.md#dec-040asking-延迟持久化phaseasking-不写-vaultpendingmessages-暂存-statejson)。
 
-### goroutine 模型
+## 中断机制
 
-Run() 内部启动一个 goroutine，使用 `emit` 闭包向返回的 channel 发送事件。goroutine 在以下情况退出：
+- 服务端 `run.go`：每轮循环前 `select { case <-ctx.Done(): return }`
+- 客户端 Ctrl+C → `signal.Notify` → `cancel()` → ctx.Done → goroutine 退出
+- 中断时不调 checkpoint，内存态丢弃，下次 Resume 回到上一断点
 
-- HelmPhaseAsking（checkpoint + Save HelmState 后退出，等外部回复）
-- HelmPhaseDone（checkpoint 后退出）
-- PhaseRunnerModel.Run 遇 LLM 错误（emit EventError 后设 Phase=Done，下一轮退出）
-
-## 行为合约
-
-### 上下文裁剪
-
-- 每轮 PhaseRunnerModel.Run 调用前，将消息历史交给 `reef.Compact()` 处理
-- 裁剪失败不阻塞，降级使用原始消息
-
-### System prompt
-
-- helm 主动拼装：行为核心 + 环境信息（OS/日期/配置目录） + 工具列表 + AGENTS.md
-- 每次 PhaseRunnerModel.Run 调用时通过 `buildSystemPrompt()` 重建（工具列表可能变化）
-
-### 错误处理
-
-- LLM 调用错误：slog.Error + emit EventError → Phase = Done
-- 工具执行失败：tu.Result = StatusError → 继续下一条
-- Vault 写入失败：slog.Error，不阻塞流程
+参考 [DEC-039](/docs/decisions.md#dec-039signal-中断ctrlc-截获触发-agent-loop-终止)。
 
 ## 关键文件
 
 | 文件 | 职责 |
 |------|------|
-| `run.go` | Run() 入口，goroutine + 事件 channel（内联 `make(chan knot.Event, 16)`） + Phase 循环 |
-| `helm_state.go` | HelmState 定义 + NewHelmState + Save/Load 持久化 + state.json 路径 |
-| `phase_runner.go` | PhaseRunner 接口 + newRunner 工厂函数 |
-| `phase_model.go` | PhaseRunnerModel：LLM 调用 + checkpoint |
+| `run.go` | Run() 入口，goroutine + 事件 channel + Phase 循环 + ctx.Done 检查 |
+| `phase_runner.go` | PhaseRunner 接口 + newRunner 工厂 |
+| `phase_model.go` | PhaseRunnerModel：LLM 调用 + Tale.AppendAssistant |
 | `phase_exec_tools.go` | PhaseRunnerExecTools：brig 门控 + 工具执行 |
-| `phase_asking.go` | PhaseRunnerAsking：断点持久化 + 等待外部回复 |
-| `phase_done.go` | PhaseRunnerDone：最终 checkpoint |
+| `phase_asking.go` | PhaseRunnerAsking：PendingMessages + SaveState |
+| `phase_done.go` | PhaseRunnerDone：checkpoint 落盘 |
 | `prompt.go` | buildSystemPrompt：拼装 system prompt |
