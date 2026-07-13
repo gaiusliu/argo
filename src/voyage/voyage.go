@@ -256,6 +256,16 @@ func Delete(baseDir, id string) error {
 	return os.RemoveAll(sessionDir(baseDir, id))
 }
 
+// DeleteState 删除控制流状态文件，用于 Asking 阶段终止。
+// 删除后下次 Resume 自然回到断点前的干净状态。
+func DeleteState(id string) error {
+	path := statePath(knot.ArgoDir(), id)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("delete state: %w", err)
+	}
+	return nil
+}
+
 // ---- 内部辅助 ----
 
 func approvalsPath(dir string) string      { return filepath.Join(dir, "approvals.json") }

@@ -41,6 +41,12 @@ type DeleteSessionRequest struct {
 	SessionID string `json:"sessionID"`
 }
 
+// InterruptRequest POST /session/interrupt 请求体。
+// 用于 Asking 阶段终止：删除 state.json，下次 Resume 回到断点前状态。
+type InterruptRequest struct {
+	SessionID string `json:"sessionID"`
+}
+
 // ---- JSON 视图类型（与 voyage 内部模型解耦） ----
 
 // TokensJSON token 统计的 JSON 序列化结构。

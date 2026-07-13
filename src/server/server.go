@@ -47,6 +47,7 @@ func New(cfg Config) *Server {
 	r.Post("/session/resume", s.handleResumeSession)
 	r.Get("/session/list", s.handleListSessions)
 	r.Post("/session/delete", s.handleDeleteSession)
+	r.Post("/session/interrupt", s.handleInterrupt)
 
 	s.router = r
 	return s
@@ -123,6 +124,19 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, DeleteSessionResponse{})
+}
+
+// handleInterrupt 删除控制流状态文件，用于 Asking 阶段终止。
+// state.json 可能不存在（非 Asking 阶段），忽略即可。
+func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
+	var body InterruptRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	voyage.DeleteState(body.SessionID)
+	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func respondJSON(w http.ResponseWriter, status int, v any) {
