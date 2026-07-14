@@ -11,7 +11,7 @@ import (
 	"argo/src/knot"
 	"argo/src/wake"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func main() {
@@ -64,10 +64,7 @@ func main() {
 	}
 
 	// 启动 Bubble Tea TUI
-	p := tea.NewProgram(
-		initialModel(client, sessionID),
-		tea.WithAltScreen(),
-	)
+	p := tea.NewProgram(initialModel(client, sessionID))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 		os.Exit(1)

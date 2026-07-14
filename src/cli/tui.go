@@ -7,24 +7,18 @@ import (
 	"argo/src/brig"
 	"argo/src/knot"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	lipgloss "charm.land/lipgloss/v2"
 )
 
 // ---- 自定义消息类型 ----
 
-// sseEventMsg SSE channel 中的 knot.Event 包装
 type sseEventMsg struct{ ev knot.Event }
-
-// streamCompleteMsg SSE channel 关闭时发送
 type streamCompleteMsg struct{}
-
-// streamErrorMsg SSE 流启动失败时发送
 type streamErrorMsg struct{ err error }
-
-// streamStartedMsg 新 SSE 流启动后携带 channel + cancel func
 type streamStartedMsg struct {
 	events <-chan knot.Event
 	cancel func()
@@ -60,13 +54,28 @@ type model struct {
 
 func initialModel(client *argoClient, sessionID string) *model {
 	ta := textarea.New()
-	ta.Placeholder = "argo> "
 	ta.ShowLineNumbers = false
-	ta.SetHeight(3)
-	ta.Focus()
-	ta.KeyMap.InsertNewline.SetEnabled(false)
+	ta.Prompt = ""
+	ta.DynamicHeight = true
+	ta.MinHeight = 1
+	ta.MaxHeight = 15
+	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter"))
 
-	vp := viewport.New(80, 20)
+	// 设置 textarea 整体背景色（color 60），消除黑色默认背景
+	bg := lipgloss.NewStyle().Background(lipgloss.Color("60"))
+	st := textarea.DefaultStyles(true)
+	st.Focused.Base = bg
+	st.Focused.CursorLine = bg
+	st.Focused.EndOfBuffer = bg
+	st.Focused.Text = bg
+	st.Blurred.Base = bg
+	st.Blurred.CursorLine = bg
+	st.Blurred.EndOfBuffer = bg
+	st.Blurred.Text = bg
+	ta.SetStyles(st)
+	ta.Focus()
+
+	vp := viewport.New()
 
 	return &model{
 		viewport:  vp,
@@ -94,22 +103,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// 计算布局：viewport 高度 = 终端高度 - 状态行(1) - textarea(3)
-		inputHeight := lipgloss.Height(m.textarea.View())
-		m.viewport.Width = msg.Width
-		m.viewport.Height = msg.Height - inputHeight - 1
+		m.textarea.SetWidth(msg.Width)
+		m.viewport.SetWidth(msg.Width)
+		m.recalcViewport()
 		m.viewport.SetContent(m.output.String())
 		m.viewport.GotoBottom()
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg)
 
 	case sseEventMsg:
 		return m.handleSSEEvent(msg.ev)
 
 	case streamStartedMsg:
-		// 取消旧流（如有），存储新流
 		if m.cancelFunc != nil {
 			m.cancelFunc()
 		}
@@ -130,14 +137,22 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// 默认：把消息传给 textarea
 	var cmd tea.Cmd
 	m.textarea, cmd = m.textarea.Update(msg)
 	return m, cmd
 }
 
-// handleKeyPress 处理键盘输入，按 asking 模式分流
-func (m *model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+// recalcViewport 根据 textarea 实际高度调整 viewport 高度
+func (m *model) recalcViewport() {
+	if m.height == 0 {
+		return
+	}
+	taHeight := m.textarea.Height()
+	m.viewport.SetHeight(m.height - taHeight - 1) // -1 状态行
+}
+
+// handleKeyPress 处理键盘输入
+func (m *model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		if m.streaming {
@@ -149,35 +164,44 @@ func (m *model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.viewport.GotoBottom()
 			return m, nil
 		}
-		return m, tea.Quit
+		return m, nil
 
-	case "enter":
+		case "ctrl+c":
+			return m, tea.Quit
+
+		case "enter":
 		if m.asking {
 			return m.handleAskVerdict()
 		}
 		return m.handleSubmit()
 	}
 
-	// 非特殊键 → 传给 textarea 或 viewport
 	if m.asking {
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
+		m.recalcViewport()
 		return m, cmd
 	}
 
-	// 正常模式：↑ ↓ pgup pgdown 滚 viewport
+	// pgup/pgdown 滚 viewport，↑ ↓ 给 textarea 移光标
 	switch msg.String() {
-	case "up", "down", "pgup", "pgdown":
+	case "pgup", "pgdown":
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+	case "up", "down":
+		var cmd tea.Cmd
+		m.textarea, cmd = m.textarea.Update(msg)
+		m.recalcViewport()
 		return m, cmd
 	}
 	var cmd tea.Cmd
 	m.textarea, cmd = m.textarea.Update(msg)
+	m.recalcViewport()
 	return m, cmd
 }
 
-// handleSubmit 正常模式下的 Enter：发送 prompt
+// handleSubmit Enter 提交
 func (m *model) handleSubmit() (tea.Model, tea.Cmd) {
 	input := strings.TrimSpace(m.textarea.Value())
 	if input == "" {
@@ -187,7 +211,10 @@ func (m *model) handleSubmit() (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	m.textarea.Reset()
-	m.output.WriteString("argo> " + input + "\n")
+	m.recalcViewport()
+
+	sep := strings.Repeat("─", m.width)
+	m.output.WriteString("\n\n" + sep + "\n" + userMsgStyle.Render("❯ "+input) + "\n")
 	m.viewport.SetContent(m.output.String())
 	m.viewport.GotoBottom()
 	return m, startSSEStreamCmd(m.client, m.sessionID, input)
@@ -195,20 +222,20 @@ func (m *model) handleSubmit() (tea.Model, tea.Cmd) {
 
 // ---- View ----
 
-func (m *model) View() string {
+func (m *model) View() tea.View {
 	if m.width == 0 {
-		return "Initializing..."
+		return tea.NewView("Initializing...")
 	}
 	vpView := m.viewport.View()
 	sbView := statusBarStyle.Width(m.width).Render(m.statusBar)
-	taView := inputStyle.Render(m.textarea.View())
+	taView := padLines(m.textarea.View(), m.width)
 
-	return lipgloss.JoinVertical(lipgloss.Top, vpView, sbView, taView)
+	rendered := lipgloss.JoinVertical(lipgloss.Top, vpView, sbView, taView)
+	return tea.NewView(rendered)
 }
 
 // ---- SSE 桥接 Commands ----
 
-// waitForSSEEvent 阻塞等待下一个 SSE 事件，包装为 tea.Msg
 func waitForSSEEvent(events <-chan knot.Event) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-events
@@ -219,7 +246,6 @@ func waitForSSEEvent(events <-chan knot.Event) tea.Cmd {
 	}
 }
 
-// startSSEStreamCmd 发起 prompt，返回 streamStartedMsg
 func startSSEStreamCmd(c *argoClient, sessionID, prompt string) tea.Cmd {
 	return func() tea.Msg {
 		events, cancel, err := c.sendPrompt(sessionID, prompt)
@@ -230,7 +256,6 @@ func startSSEStreamCmd(c *argoClient, sessionID, prompt string) tea.Cmd {
 	}
 }
 
-// restartStreamWithAskReply 取消旧流，发送 Ask 裁决，启动新流
 func restartStreamWithAskReply(c *argoClient, sessionID string, tus []knot.ToolUse) tea.Cmd {
 	return func() tea.Msg {
 		events, cancel, err := c.sendAskReply(sessionID, tus)
@@ -243,7 +268,6 @@ func restartStreamWithAskReply(c *argoClient, sessionID string, tus []knot.ToolU
 
 // ---- SSE 事件处理 ----
 
-// handleSSEEvent 分发 knot.Event 到各 EventType 处理
 func (m *model) handleSSEEvent(ev knot.Event) (tea.Model, tea.Cmd) {
 	switch ev.Type {
 
@@ -294,7 +318,6 @@ func (m *model) handleSSEEvent(ev knot.Event) (tea.Model, tea.Cmd) {
 		m.askInterrupted = false
 		m.textarea.Placeholder = "Ask [y/N/stop]: "
 		m.textarea.Focus()
-		// 首个 Ask 工具提示追加到 output
 		tu := m.askingTUs[0]
 		m.output.WriteString(formatAskPrompt(tu))
 		m.viewport.SetContent(m.output.String())
@@ -302,8 +325,7 @@ func (m *model) handleSSEEvent(ev knot.Event) (tea.Model, tea.Cmd) {
 
 	case knot.EventError:
 		clear(m.seenTools)
-		errMsg := errorStyle.Render(fmt.Sprintf("\nError: %v\n", ev.Err))
-		m.output.WriteString(errMsg)
+		m.output.WriteString(errorStyle.Render(fmt.Sprintf("\nError: %v\n", ev.Err)))
 		m.viewport.SetContent(m.output.String())
 		m.viewport.GotoBottom()
 
@@ -311,16 +333,15 @@ func (m *model) handleSSEEvent(ev knot.Event) (tea.Model, tea.Cmd) {
 		clear(m.seenTools)
 	}
 
-	// 继续等待下一个 SSE 事件
 	return m, waitForSSEEvent(m.streamCh)
 }
 
 // ---- Ask 裁决处理 ----
 
-// handleAskVerdict 处理 Ask 模式下的用户输入
 func (m *model) handleAskVerdict() (tea.Model, tea.Cmd) {
 	response := strings.TrimSpace(m.textarea.Value())
 	m.textarea.Reset()
+	m.recalcViewport()
 
 	tu := m.askingTUs[m.askIndex]
 
@@ -332,7 +353,7 @@ func (m *model) handleAskVerdict() (tea.Model, tea.Cmd) {
 		m.output.WriteString("\n" + errorStyle.Render("Session interrupted.") + "\n")
 		m.asking = false
 		m.streaming = false
-		m.textarea.Placeholder = "argo> "
+		m.textarea.Placeholder = ""
 		m.viewport.SetContent(m.output.String())
 		m.viewport.GotoBottom()
 		return m, nil
@@ -347,18 +368,29 @@ func (m *model) handleAskVerdict() (tea.Model, tea.Cmd) {
 	m.askIndex++
 
 	if m.askIndex >= len(m.askingTUs) {
-		// 全部裁决完成 → 发送 Ask 回复
 		m.asking = false
-		m.textarea.Placeholder = "argo> "
+		m.textarea.Placeholder = ""
 		clear(m.seenTools)
 		m.cancelFunc()
 		return m, restartStreamWithAskReply(m.client, m.sessionID, m.askingTUs)
 	}
 
-	// 展示下一个工具的 Ask 提示
 	nextTU := m.askingTUs[m.askIndex]
 	m.output.WriteString(formatAskPrompt(nextTU))
 	m.viewport.SetContent(m.output.String())
 	m.viewport.GotoBottom()
 	return m, nil
+}
+
+// ---- 辅助 ----
+
+func padLines(s string, width int) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		w := lipgloss.Width(line)
+		if w < width {
+			lines[i] = line + strings.Repeat(" ", width-w)
+		}
+	}
+	return strings.Join(lines, "\n")
 }

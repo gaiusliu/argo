@@ -1,6 +1,6 @@
 package main
 
-import "github.com/charmbracelet/lipgloss"
+import lipgloss "charm.land/lipgloss/v2"
 
 // 预定义的 lipgloss 样式，替换旧的原始 ANSI 转义序列。
 var (
@@ -42,6 +42,11 @@ var (
 	// askPromptStyle Ask 权限确认提示
 	askPromptStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("3")).
+			Bold(true)
+
+	// userMsgStyle 用户已发送的消息
+	userMsgStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("14")).
 			Bold(true)
 
 	// errorStyle 错误信息
