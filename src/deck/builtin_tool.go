@@ -23,6 +23,7 @@ import (
 	md "github.com/JohannesKaufmann/html-to-markdown"
 	doublestar "github.com/bmatcuk/doublestar/v4"
 
+	"argo/src/crew"
 	"argo/src/knot"
 )
 
@@ -159,6 +160,14 @@ var builtinTools = []*builtinTool{
 			"query": prop("string", "搜索词"),
 		}),
 		handler: webSearchHandler,
+	},
+	{
+		name:        "skill",
+		description: "加载指定技能的完整指令。传入技能名称（从 available_skills 列表中选择）",
+		paramsSchema: toolSchema([]string{"name"}, map[string]map[string]any{
+			"name": prop("string", "技能名称"),
+		}),
+		handler: skillHandler,
 	},
 }
 
@@ -544,6 +553,27 @@ func listHandler(ctx context.Context, params map[string]any) (knot.ToolResult, e
 		fmt.Fprintf(&buf, "%s: %s\n", t.Name(), t.Description())
 	}
 	return knot.ToolResult{Status: knot.StatusSuccess, Output: buf.String()}, nil
+}
+
+// skillHandler 加载指定技能的完整指令正文（L2 披露）。
+// 参数 name 为技能名称，从 crew 注册表中查找对应技能的 SKILL.md 全文。
+// 成功时返回去 frontmatter 后的 Markdown 正文，不存在时返回 StatusError。
+func skillHandler(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, BuiltinToolTimeout)
+	defer cancel()
+
+	name, ok := params["name"].(string)
+	if !ok || name == "" {
+		return knot.ToolResult{Status: knot.StatusError, Output: "skill: name is required"},
+			fmt.Errorf("skill: name is required")
+	}
+
+	content, err := crew.Instructions(name)
+	if err != nil {
+		return knot.ToolResult{Status: knot.StatusError, Output: fmt.Sprintf("未知技能: %s", name)}, err
+	}
+
+	return knot.ToolResult{Status: knot.StatusSuccess, Output: content}, nil
 }
 
 // lookupHandler 按名称查找工具，返回详细元数据

@@ -3,9 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
+	"argo/src/crew"
 	"argo/src/helm"
 	"argo/src/knot"
 	"argo/src/voyage"
@@ -50,7 +53,9 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		// 新消息路径：设置初始状态 + 追加 user 消息
 		v.Phase = voyage.PhaseModel
 		v.Model = req.Model
-		v.Tale().AppendUser(req.Message)
+
+		msg := resolveSlashCommand(req.Message)
+		v.Tale().AppendUser(msg)
 		slog.Info("new user message", "content", req.Message)
 	}
 
@@ -59,6 +64,29 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 
 	events := helm.Run(ctx, v)
 	streamAndSave(w, events)
+}
+
+// resolveSlashCommand 检测 /skill-name 模式的消息。
+// 如果消息以 "/" 开头且对应技能存在，则拼接技能全文后返回；
+// 技能不存在时保持原样，交给 LLM 处理。
+func resolveSlashCommand(msg string) string {
+	if !strings.HasPrefix(msg, "/") {
+		return msg
+	}
+
+	parts := strings.SplitN(msg, " ", 2)
+	skillName := strings.TrimPrefix(parts[0], "/")
+	content, err := crew.Instructions(skillName)
+	if err != nil {
+		return msg // 技能不存在，保持原样
+	}
+
+	// 拼合技能全文和用户原话
+	userPart := ""
+	if len(parts) > 1 {
+		userPart = parts[1]
+	}
+	return fmt.Sprintf("[Loaded skill %q]\n\n%s\n\n---\n%s", skillName, content, userPart)
 }
 
 // streamAndSave SSE 转发所有事件，不做持久化（持久化由状态机 checkpoint 负责）。

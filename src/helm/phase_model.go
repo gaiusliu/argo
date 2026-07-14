@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"argo/src/crew"
 	"argo/src/deck"
 	"argo/src/knot"
 	"argo/src/sail"
@@ -19,7 +20,8 @@ type PhaseRunnerModel struct {
 
 func NewPhaseRunnerModel() *PhaseRunnerModel {
 	tools := deck.List()
-	sp := buildSystemPrompt(tools)
+	skills := crew.List()
+	sp := buildSystemPrompt(tools, skills)
 	return &PhaseRunnerModel{
 		SystemPrompt: sp,
 		Tools:        tools,

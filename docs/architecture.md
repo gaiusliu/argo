@@ -1,6 +1,6 @@
 # Argo 技术架构
 
-## 模块清单（9 模块 + knot + server）
+## 模块清单（10 模块 + knot + server）
 
 | 模块 | 职责 | 状态 |
 |------|------|------|
@@ -14,7 +14,7 @@
 | **server** | 无状态 HTTP 后端。chi 路由 + SSE 流式事件 | ✅ 稳定 |
 | **wake** | 日志模块。日期+大小自动轮转，过期清理 | ✅ 稳定 |
 | **reef** | 上下文压缩。当前为桩（`Compact` 原样返回） | 🚧 桩 |
-| **crew** | Skill 技能加载。SKILL.md 扫描 + 渐进式披露 | ❌ 未实现 |
+| **crew** | 技能管理。SKILL.md 扫描 + 渐进式披露 + skill 工具 + /skill-name | ✅ 稳定 |
 
 ## 模块关系
 
@@ -29,6 +29,9 @@ flowchart TB
     Helm --> Sail["sail（模型）"]
     Helm --> Deck["deck（工具）"]
     Helm --> Reef["reef（压缩，桩）"]
+    Helm --> Crew["crew（技能）"]
+    Deck --> Crew
+    Server --> Crew
 
     Helm --> Voyage["voyage（会话聚合）"]
     Voyage --> Vault["vault（存储）"]
@@ -124,6 +127,7 @@ src/
 ├── reef/           上下文压缩（桩）
 ├── wake/           日志轮转（LogWriter）
 ├── tale/           对话历史封装（Tale：Messages + Saved 游标）
+├── crew/           技能管理（SkillInfo + Crew + 渐进式披露）
 ├── server/         无状态 HTTP 后端（chi + SSE）
 ├── cli/            CLI HTTP 客户端
 └── argo-server/    HTTP 服务入口 main

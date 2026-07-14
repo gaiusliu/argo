@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 
+	"argo/src/crew"
 	"argo/src/deck"
 	"argo/src/knot"
 	"argo/src/server"
@@ -48,6 +49,12 @@ func main() {
 	cwd, err := os.Getwd()
 	if err != nil {
 		slog.Error("获取工作目录失败", "error", err)
+		os.Exit(1)
+	}
+
+	// 初始化技能注册表
+	if err := crew.Init(knot.ArgoDir(), cwd); err != nil {
+		slog.Error("技能注册表初始化失败", "error", err)
 		os.Exit(1)
 	}
 
