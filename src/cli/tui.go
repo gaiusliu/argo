@@ -214,7 +214,7 @@ func (m *model) handleSubmit() (tea.Model, tea.Cmd) {
 	m.recalcViewport()
 
 	sep := strings.Repeat("─", m.width)
-	m.output.WriteString("\n\n" + sep + "\n" + userMsgStyle.Render("❯ "+input) + "\n")
+	m.output.WriteString("\n\n" + sep + "\n" + userMsgStyle.Render("❯ "+input) + "\n" + sep + "\n")
 	m.viewport.SetContent(m.output.String())
 	m.viewport.GotoBottom()
 	return m, startSSEStreamCmd(m.client, m.sessionID, input)
@@ -288,7 +288,7 @@ func (m *model) handleSSEEvent(ev knot.Event) (tea.Model, tea.Cmd) {
 		m.viewport.GotoBottom()
 
 	case knot.EventThinkingDelta:
-		m.output.WriteString(ev.Delta)
+		m.output.WriteString(thinkingStyle.Render(ev.Delta))
 		m.viewport.SetContent(m.output.String())
 		m.viewport.GotoBottom()
 

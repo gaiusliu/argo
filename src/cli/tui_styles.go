@@ -46,7 +46,7 @@ var (
 
 	// userMsgStyle 用户已发送的消息
 	userMsgStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("14")).
+			Foreground(lipgloss.Color("11")).
 			Bold(true)
 
 	// errorStyle 错误信息
