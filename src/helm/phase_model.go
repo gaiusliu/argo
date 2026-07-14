@@ -59,6 +59,8 @@ func (pr *PhaseRunnerModel) Run(ctx context.Context,
 			}
 		} else if evt.Type == knot.EventTextDelta {
 			textBuf.WriteString(evt.Delta)
+		} else if evt.Type == knot.EventTextDone {
+			v.LastUsage = evt.Usage
 		} else if evt.Type == knot.EventError {
 			emit(evt)
 			v.Phase = voyage.PhaseDone

@@ -15,12 +15,18 @@ import (
 
 var ChatDefaultTimeout = 5 * time.Minute
 
+// openAIStreamOptions 流式选项，启用 usage 返回
+type openAIStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
 // openAIReq OpenAI /v1/chat/completions 请求体
 type openAIReq struct {
-	Model    string       `json:"model"`
-	Messages []openAIMsg  `json:"messages"`
-	Stream   bool         `json:"stream"`
-	Tools    []openAITool `json:"tools,omitempty"`
+	Model         string               `json:"model"`
+	Messages      []openAIMsg          `json:"messages"`
+	Stream        bool                 `json:"stream"`
+	Tools         []openAITool         `json:"tools,omitempty"`
+	StreamOptions openAIStreamOptions  `json:"stream_options"`
 }
 
 // openAITool OpenAI function calling 工具定义
@@ -57,6 +63,12 @@ type openAIMsg struct {
 	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
 }
 
+// openAIUsage stream_options 开启后，最后一块 chunk 携带的 token 统计
+type openAIUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+}
+
 // openAIChunk OpenAI Chat Completions SSE chunk 的 JSON 映射
 type openAIChunk struct {
 	Choices []struct {
@@ -74,6 +86,7 @@ type openAIChunk struct {
 			} `json:"tool_calls"`
 		} `json:"delta"`
 	} `json:"choices"`
+	Usage openAIUsage `json:"usage"`
 }
 
 // toolCallState 记录单个 tool call 流式推送中的累积状态
@@ -88,6 +101,7 @@ type streamState struct {
 	textActive     bool
 	thinkingActive bool
 	toolCalls      map[int]toolCallState
+	lastUsage      knot.TokenUsage // 本次 Chat 调用的 token 消耗（API 实际返回）
 }
 
 func newStreamState() *streamState {
@@ -101,6 +115,11 @@ func (s *streamState) handleChunk(raw []byte) ([]knot.Event, error) {
 	var chunk openAIChunk
 	if err := json.Unmarshal(raw, &chunk); err != nil {
 		return nil, fmt.Errorf("sail: parse chunk: %w", err)
+	}
+	// 每块都可能带 usage（最后一块才有真实数据），直接存
+	s.lastUsage = knot.TokenUsage{
+		InputTokens:  chunk.Usage.PromptTokens,
+		OutputTokens: chunk.Usage.CompletionTokens,
 	}
 	if len(chunk.Choices) == 0 {
 		return nil, nil
@@ -155,11 +174,15 @@ func (s *streamState) handleChunk(raw []byte) ([]knot.Event, error) {
 	return events, nil
 }
 
-// flush 返回关闭所有活跃 block 的事件（textDone / thinkingDone / toolUseDelta）
+// flush 返回关闭所有活跃 block 的事件（textDone / thinkingDone / toolUseDelta）。
+// EventTextDone 附带本次 Chat 调用的 token 统计（来自 API usage 块）。
 func (s *streamState) flush() []knot.Event {
 	var events []knot.Event
 	if s.textActive {
-		events = append(events, knot.Event{Type: knot.EventTextDone})
+		events = append(events, knot.Event{
+			Type:  knot.EventTextDone,
+			Usage: s.lastUsage,
+		})
 		s.textActive = false
 	}
 	if s.thinkingActive {

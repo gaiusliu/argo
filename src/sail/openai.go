@@ -104,6 +104,7 @@ func (s *ProviderOpenAI) buildRequestBody() {
 		Messages: openAIMsgs,
 		Stream:   true,
 		Tools:    tools,
+		StreamOptions: openAIStreamOptions{IncludeUsage: true},
 	}
 }
 

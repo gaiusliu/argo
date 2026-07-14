@@ -47,8 +47,9 @@ type Voyage struct {
 	Phase           int
 	Model           string
 	ToolUses        []knot.ToolUse
-	Saved           int            // 持久化游标（SaveState/LoadState 时与 Tale 同步）
-	PendingMessages []knot.Message // Asing 阶段尚未落盘的消息（user + assistant）
+	LastUsage       knot.TokenUsage // 最近一次 Chat API 的 token 消耗
+	Saved           int             // 持久化游标（SaveState/LoadState 时与 Tale 同步）
+	PendingMessages []knot.Message  // Asking 阶段尚未落盘的消息（user + assistant）
 }
 
 // Option 函数选项，用于注入 Vault / Gate 等依赖。
