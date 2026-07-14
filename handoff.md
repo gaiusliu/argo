@@ -1,61 +1,40 @@
-# Handoff — 2026-07-14（Interrupt 完成 + Asking 延迟持久化）
+# Handoff — 2026-07-14（crew 平坦模式 完成）
 
-## 历史会话成果
+## 本次会话成果
 
-- 2026-07-12：架构全景评审、kimi 提案、命名决策（commit `80c2538`）
-- 2026-07-13：Tale 引入 + Voyage 合并 + DI 改造 #1 #2 #4 #6（commit `b30b187`、`a3a7847`）
+### crew 平坦模式（迭代 012，已闭环）
 
-## 本次会话成果（2026-07-14）
-
-### Interrupt 能力
+实现完整的技能管理模块。代码 + 测试 + 文档全链路交付。
 
 | 变更 | 文件 | 说明 |
 |------|------|------|
-| run.go ctx 检查 | `src/helm/run.go` | for 循环前 `select { case <-ctx.Done(): return }` |
-| Signal 中断 | `src/cli/main.go` | `signal.Notify(os.Interrupt)` + `select` 双通道消费 events/sigCh。弃用 raw mode + ESC 方案 |
-| Interrupt 端点 | `src/server/server.go` | `POST /session/interrupt` → `voyage.DeleteState(id)` |
-| DeleteState | `src/voyage/voyage.go` | 删 state.json，不存在忽略 |
-| askCLI 三态 | `src/cli/ask.go` | approve / deny / interrupt（输入 `stop` 或 `/interrupt`） |
-| interruptSession | `src/cli/crud.go` | 客户端方法，调 `/interrupt` 端点 |
+| crew 核心包 | `src/crew/types.go` `scanner.go` `loader.go` `registry.go` `crew_test.go` | SkillInfo + Skills 接口 + 磁盘实时扫描（不缓存），6 个测试 PASS |
+| System Prompt 注入 | `src/helm/prompt.go` `src/helm/phase_model.go` | `<available_skills>` XML 块（L1 披露） |
+| skill 工具 | `src/deck/builtin_tool.go` | `skillHandler` — LLM 自主激活路径（L2） |
+| /skill-name 检测 | `src/server/prompt.go` | `resolveSlashCommand()` — server 层拦截，所有客户端通用 |
+| 全局初始化 | `src/argo-server/main.go` | 启动时 `crew.Init()` |
+| 文档 | `docs/modules/crew/design.md` `docs/architecture.md` `docs/iterations/012-crew-flat/main.md` | 设计文档 + 架构更新 + 迭代归档 |
+| README | `README.md` | 加入 crew 模块，模块关系图改为 ASCII |
 
-### Asking 延迟持久化
-
-| 变更 | 文件 | 说明 |
-|------|------|------|
-| PendingMessages | `src/voyage/voyage.go` | Voyage 新增字段，Asking 时暂存未落盘的 user + assistant(tool_calls) |
-| 去 checkpoint | `src/helm/phase_asking.go` | 不调 `checkpoint(v)`，改为 `v.PendingMessages = v.Tale().Unsaved()` |
-| AppendMessages | `src/tale/tale.go` | 新方法，追加消息不改变持久化游标 |
-| LoadState 恢复 | `src/voyage/voyage.go` | 反序列化后将 PendingMessages 恢复到 Tale |
-
-### 会话历史
-
-| 变更 | 文件 | 说明 |
-|------|------|------|
-| ResumeSessionResponse | `src/server/types.go` | 新增 Messages 字段，`/session/resume` 返回完整对话 |
-| 历史展示 | `src/cli/session_pick.go` | 恢复已有会话时展示对话历史（截断 200 字符） |
-
-### 新增设计决策
+### 关键设计决策
 
 | 决策 | 说明 |
 |------|------|
-| DEC-039 | Signal 中断——Ctrl+C 截获触发 agent loop 终止，不用 raw mode + ESC |
-| DEC-040 | Asking 延迟持久化——PhaseAsking 不写 vault，PendingMessages 暂存 state.json |
+| pi-style 磁盘读取 | Crew 不缓存——每次 `List()` / `Instructions()` 从磁盘重新扫描，新安装的技能立即可见，无需 reload |
+| 双激活路径 | skill 工具（LLM 自主） + /skill-name（用户显式），server 层统一检测 |
+| 轻量定位 | 不做技能安装工具、不做条件激活、不做热更新、不做安全扫描 |
+| 不做 Instructions() 路径直读优化 | 技能 < 20 时无感知，> 50 时再做 |
 
-### 文档更新
+### commit 记录
 
-| 文档 | 变更 |
-|------|------|
-| `docs/decisions.md` | +DEC-039、DEC-040 |
-| `docs/voyage/design.md` | PendingMessages、中断回滚、DeleteState |
-| `docs/modules/helm/design.md` | 全文重写：新签名、Asking 流程、中断机制 |
-| `docs/modules/server/design.md` | 全文重写：`/interrupt` 端点、ResumeSessionResponse |
-| `docs/architecture.md` | 中断流程（运行中 + Asking） |
+```
+f171ec8 architecture.md 模块关系图换为 ASCII
+e4a9438 修正 architecture.md mermaid 图
+a0d9fc8 更新 README 架构图：加入 crew 模块
+88358b6 crew 平坦模式：技能发现 + 渐进式披露 + skill 工具 + /skill-name
+```
 
-### 未 commit
-
-所有代码变更和文档更新均未提交，在 working tree 中。
-
-## 已知残留问题（从前期继承）
+## 已知残留问题（从前期继承，本会话未触及）
 
 | 问题 | 位置 | 说明 |
 |------|------|------|
@@ -65,14 +44,19 @@
 | 旧 `Sail` 接口 | `src/sail/sail.go:16` | 0 外部调用者 |
 | `knot.LookupModel()` | `src/knot/config.go:150` | 仅被 `sail.Window()` 调用 |
 
-## 待办清单
+## 待办清单（从前期继承 + 新识别）
 
 | # | 任务 | 复杂度 | 说明 |
 |---|------|--------|------|
-| 9 | **Asking 不断连** | 中 | 当前 goroutine 退出 + 客户端走新 HTTP 请求。改为同 SSE 连接内收 verdicts |
-| 10 | **reef compact** | 高 | Tale 消息裁剪 + LLM 摘要 + 上下文重组。当前是桩。规约见 `docs/modules/reef/what.md` |
-| 7 | **crew** | 高 | SKILL.md 扫描 + 渐进式披露 |
-| 8 | **AgentService** | 中 | `src/server/prompt.go` handler 瘦身 |
+| **crew** | | | |
+| — | 技能树模式 | 中 | `Tree()` 接口 + `browse` 工具 + 分类模式触发（技能 > N） |
+| — | L3 资源文件 | 低 | 技能目录下 references/ 的索引和暴露 |
+| — | Instructions() 路径优化 | 低 | 技能 > 50 时直接读路径而非全量扫描 |
+| **待办（handoff 前期）** | | | |
+| 9 | Asking 不断连 | 中 | 当前 goroutine 退出 + 客户端走新 HTTP 请求。改为同 SSE 连接内收 verdicts |
+| 10 | reef compact | 高 | Tale 消息裁剪 + LLM 摘要 + 上下文重组。当前是桩 |
+| 7 | crew（原） | ✅ 已完成 | 见本次会话成果 |
+| 8 | AgentService | 中 | `src/server/prompt.go` handler 瘦身 |
 
 ## 未来可做
 
@@ -83,5 +67,5 @@
 
 ## 建议技能
 
-- `two-axis-review`：全部改造完成后做代码审查
-- `grow-doc`：后续迭代生成迭代文档 + 模块 design.md
+- `two-axis-review`：crew 实现完成后做代码审查
+- `grow-doc`：后续迭代生成迭代文档 + 更新模块 design.md
