@@ -29,13 +29,13 @@ flowchart TB
     Helm --> Sail["sail（模型）"]
     Helm --> Deck["deck（工具）"]
     Helm --> Reef["reef（压缩，桩）"]
-    Helm --> Crew["crew（技能）"]
-    Deck --> Crew
-    Server --> Crew
 
     Helm --> Voyage["voyage（会话聚合）"]
     Voyage --> Vault["vault（存储）"]
     Voyage --> Brig["brig（权限）"]
+
+    Deck --> Crew["crew（技能）"]
+    Server --> Crew
 
     Vault --> Knot["knot（共享类型）"]
     Sail --> Knot
@@ -46,6 +46,9 @@ flowchart TB
 - helm 直接使用 `*voyage.Voyage`，无中间接口
 - vault 绑定 session 目录，不知道 session ID
 - brig 绑定 WorkingDir，通过 Gate 接口分层裁决
+- helm → crew：`crew.List()` 注入 L1 技能列表到 system prompt
+- deck → crew：`skill` 工具调用 `crew.Instructions()` 加载 L2 全文
+- server → crew：`/skill-name` 检测调用 `crew.Instructions()`
 - server 每次请求独立：从磁盘恢复 → Run → 流式转发 → 持久化
 
 ## 数据流（一回合）
