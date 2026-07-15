@@ -60,6 +60,7 @@ func (pr *PhaseRunnerModel) Run(ctx context.Context,
 		} else if evt.Type == knot.EventTextDelta {
 			textBuf.WriteString(evt.Delta)
 		} else if evt.Type == knot.EventTextDone {
+			evt.Usage.ContextWindow = sail.Window(pr.Provider.Model()).MaxTokens
 			v.LastUsage = evt.Usage
 		} else if evt.Type == knot.EventError {
 			emit(evt)

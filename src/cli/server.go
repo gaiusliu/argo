@@ -18,12 +18,15 @@ func startServer(addr string) (context.CancelFunc, error) {
 		return func() {}, nil // 已有 server 运行，无需管理生命周期
 	}
 
-	// 查找 argo-server.exe：优先 exe 同目录，其次 PATH
+	// 查找 argo-server：优先 exe 同目录，其次 PATH（Windows 下也兼容 .exe）
 	exePath := "argo-server"
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
-		if _, err := os.Stat(filepath.Join(dir, "argo-server.exe")); err == nil {
-			exePath = filepath.Join(dir, "argo-server.exe")
+		for _, name := range []string{"argo-server.exe", "argo-server"} {
+			if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+				exePath = filepath.Join(dir, name)
+				break
+			}
 		}
 	}
 

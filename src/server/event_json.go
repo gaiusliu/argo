@@ -23,8 +23,9 @@ type ToolUseJSON struct {
 }
 
 type UsageJSON struct {
-	Input  int `json:"input"`
-	Output int `json:"output"`
+	Input   int `json:"input"`
+	Output  int `json:"output"`
+	Context int `json:"context,omitempty"`
 }
 
 func ToEventJSON(ev knot.Event) EventJSON {
@@ -48,8 +49,8 @@ func ToEventJSON(ev knot.Event) EventJSON {
 			e.ToolUse.Status = int(ev.ToolUse.Result.Status)
 		}
 	}
-	if ev.Type == knot.EventDone {
-		e.Usage = &UsageJSON{Input: ev.Usage.InputTokens, Output: ev.Usage.OutputTokens}
+	if ev.Type == knot.EventDone || ev.Type == knot.EventTextDone {
+		e.Usage = &UsageJSON{Input: ev.Usage.InputTokens, Output: ev.Usage.OutputTokens, Context: ev.Usage.ContextWindow}
 	}
 	return e
 }

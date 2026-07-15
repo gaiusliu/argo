@@ -76,6 +76,7 @@ func initialModel(client *argoClient, sessionID string) *model {
 	ta.Focus()
 
 	vp := viewport.New()
+	vp.SoftWrap = true
 
 	return &model{
 		viewport:  vp,
@@ -278,8 +279,12 @@ func (m *model) handleSSEEvent(ev knot.Event) (tea.Model, tea.Cmd) {
 
 	case knot.EventTextDone:
 		if ev.Usage.InputTokens > 0 || ev.Usage.OutputTokens > 0 {
-			m.statusBar = fmt.Sprintf("tokens: in %d | out %d",
-				ev.Usage.InputTokens, ev.Usage.OutputTokens)
+			cw := ev.Usage.ContextWindow
+			if cw > 0 {
+				pct := float64(ev.Usage.InputTokens) / float64(cw) * 100
+				m.statusBar = fmt.Sprintf("tokens: in %d | out %d | ctx %s (%.1f%%)",
+					ev.Usage.InputTokens, ev.Usage.OutputTokens, formatK(cw), pct)
+			}
 		}
 
 	case knot.EventThinkingStart:
@@ -383,6 +388,16 @@ func (m *model) handleAskVerdict() (tea.Model, tea.Cmd) {
 }
 
 // ---- 辅助 ----
+
+func formatK(n int) string {
+	if n >= 1_000_000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
+	if n >= 1_000 {
+		return fmt.Sprintf("%dk", n/1_000)
+	}
+	return fmt.Sprintf("%d", n)
+}
 
 func padLines(s string, width int) string {
 	lines := strings.Split(s, "\n")

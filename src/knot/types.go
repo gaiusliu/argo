@@ -74,8 +74,9 @@ type TokenLimit struct {
 
 // TokenUsage 单次调用的 token 消耗
 type TokenUsage struct {
-	InputTokens  int
-	OutputTokens int
+	InputTokens   int
+	OutputTokens  int
+	ContextWindow int // 模型 context window 上限（server 端填充）
 }
 
 // Event 流式事件，通过 channel 推送给调用方
