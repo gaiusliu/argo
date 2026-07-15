@@ -1,71 +1,79 @@
-# Handoff — 2026-07-14（crew 平坦模式 完成）
+# Handoff — 2026-07-16
 
 ## 本次会话成果
 
-### crew 平坦模式（迭代 012，已闭环）
-
-实现完整的技能管理模块。代码 + 测试 + 文档全链路交付。
+### 迭代 014：reef 策略接口抽取 + LLM Summary Compactor
 
 | 变更 | 文件 | 说明 |
 |------|------|------|
-| crew 核心包 | `src/crew/types.go` `scanner.go` `loader.go` `registry.go` `crew_test.go` | SkillInfo + Skills 接口 + 磁盘实时扫描（不缓存），6 个测试 PASS |
-| System Prompt 注入 | `src/helm/prompt.go` `src/helm/phase_model.go` | `<available_skills>` XML 块（L1 披露） |
-| skill 工具 | `src/deck/builtin_tool.go` | `skillHandler` — LLM 自主激活路径（L2） |
-| /skill-name 检测 | `src/server/prompt.go` | `resolveSlashCommand()` — server 层拦截，所有客户端通用 |
-| 全局初始化 | `src/argo-server/main.go` | 启动时 `crew.Init()` |
-| 文档 | `docs/modules/crew/design.md` `docs/architecture.md` `docs/iterations/012-crew-flat/main.md` | 设计文档 + 架构更新 + 迭代归档 |
-| README | `README.md` | 加入 crew 模块，模块关系图改为 ASCII |
+| ContextConfig | `src/knot/types.go`, `config.go` | 新增 context 段（compact, compactThreshold=80, truncation），默认 compact="llm-summary", truncation="head-tail" |
+| Truncator 接口 + 实现 | `src/deck/truncator.go`, `truncation_headtail.go`, `truncation_types.go` | Truncator 接口 + HeadTailTruncator + ToolIntent/Observation 预声明；reef 包已删除 |
+| Compactor 接口 + 实现 | `src/helm/compactor.go`, `compact_llm_summary.go` | Compactor 接口 + LLMSummaryCompactor（7 段结构化模板，阈值 80%，head 3 条 + tail 8K token 倒推，serializeForCompact 对齐 Opencode 合并 tool call+result） |
+| Truncator 注入 deck | `src/deck/builtin_tool.go`, `cli_tool.go`, `tool.go` | builtinTool/cliTool 加 truncator 字段，RegisterTools 内部 resolveTruncator() |
+| Compactor 注入 helm | `src/helm/phase_model.go` | PhaseRunnerModel 加 Compactor 字段，resolveCompactor(provider) 在 Run() 中调用，Compact 在 BuildRequest 之后、Chat 之前 |
+| MarkCompact 桩 | `src/tale/tale.go` | 空实现，等待 transcript 持久化方案确定 |
+
+### commit 记录
+
+未提交。当前 git status：修改 12 个文件，新增 6 个文件，删除 reef/ 目录下 4 个文件。
 
 ### 关键设计决策
 
 | 决策 | 说明 |
 |------|------|
-| pi-style 磁盘读取 | Crew 不缓存——每次 `List()` / `Instructions()` 从磁盘重新扫描，新安装的技能立即可见，无需 reload |
-| 双激活路径 | skill 工具（LLM 自主） + /skill-name（用户显式），server 层统一检测 |
-| 轻量定位 | 不做技能安装工具、不做条件激活、不做热更新、不做安全扫描 |
-| 不做 Instructions() 路径直读优化 | 技能 < 20 时无感知，> 50 时再做 |
+| reef 包解散 | Compactor 归 helm（依赖 LLM），Truncator 归 deck（依赖工具），reef/ 目录删除 |
+| 默认 compact="llm-summary" | 调研 Codex、Claude Code、Hermes、OpenClaw、PI、Kilocode、Opencode 全部 7 个 agent，均默认 LLM Summary；Argo 从 passthrough 改为 llm-summary |
+| compactThreshold=80% | 对齐 Claude Code；Hermes 的 50% 太激进（每轮都触发） |
+| LLM Summary 7 段格式 | 复用 Hermes/Opencode 实战模板：Goal / Constraints / Progress / Key Decisions / Next Steps / Critical Context / Relevant Files |
+| serializeForCompact 合并 tool call+result | 对齐 Opencode：预建 ToolCallID→Content map，assistant 消息的 ToolCalls 与对应 tool 消息合并输出为 `[Tool call]: name(args) [Tool result]: content` |
+| serializeForCompact 不截断 tool 内容 | 截断是 Truncator 的职责，Compactor 不应重复处理 |
+| Compactor 返回值用区间 | `(summary, from, to, err)`——被覆盖的消息区间 [from, to)，不返回重构后的消息列表 |
+| Compact 阈值判断在 Compact 内部 | Run() 不关心触发条件，只传入 inputTokens（v.LastUsage.InputTokens API 精确值） |
+| MaxTokens 通过 Provider 获取 | sail.Window(provider.Model())，不在接口传参 |
+| 策略内部自行 Resolve | deck.RegisterTools() 内部 resolveTruncator()；helm.NewPhaseRunnerModel()→Run() 内部 resolveCompactor(provider)，不通过调用链参数传递 |
+| no SummaryFunc | Provider 直接注入 LLMSummaryCompactor 结构体；模板硬编码在 Compact 方法内 |
 
-### commit 记录
+## 待解决问题
 
-```
-f171ec8 architecture.md 模块关系图换为 ASCII
-e4a9438 修正 architecture.md mermaid 图
-a0d9fc8 更新 README 架构图：加入 crew 模块
-88358b6 crew 平坦模式：技能发现 + 渐进式披露 + skill 工具 + /skill-name
-```
+### 1. transcript.jsonl 持久化：compact 标记应该写在哪里
 
-## 已知残留问题（从前期继承，本会话未触及）
+**现状**：Tale.MarkCompact() 是空桩。compaction 发生后的摘要需要持久化到 transcript.jsonl 以便下次加载时恢复压缩视图。
 
-| 问题 | 位置 | 说明 |
+**讨论过的方案**：
+
+| 方案 | 描述 | 结论 |
 |------|------|------|
-| 死代码 `sail.Window()` | `src/sail/sail.go:218` | 0 调用者 |
-| `http.DefaultClient` 残留 | `src/sail/adapter.go:315`、`src/deck/builtin_tool.go:611,674` | 不走 ProviderOpenAI 路径 |
-| `NewProviderOpenAI` 冗余参数 | `src/sail/sail.go` | messages/tools 参数已无意义 |
-| 旧 `Sail` 接口 | `src/sail/sail.go:16` | 0 外部调用者 |
-| `knot.LookupModel()` | `src/knot/config.go:150` | 仅被 `sail.Window()` 调用 |
+| state.json 存储 CompactMeta | 和 Saved 游标一起序列化 | ❌ state.json 只管控制流状态，不应掺和 transcript 内容 |
+| 两条写路径（AppendMessages + AppendCompact） | checkpoint 时分别写消息 delta 和 compact 记录 | ❌ 顺序可能不一致，compact 应在消息流中按时间排列 |
+| **compact 作为 transcript 的一种 entry 类型** | 添加 `RecordCompact` 类型，compaction 标记按时间顺序写入 transcript.jsonl，和 user/model/tool 并列 | ✅ 对齐 PI 和 Opencode 的做法 |
 
-## 待办清单（从前期继承 + 新识别）
+**Opencode/PI 做法**：compaction 是 entry 列表中和 message 并列的一类 entry，按时间顺序排列。`buildSessionContext()` 遇到 compaction 时应用压缩视图。
 
-| # | 任务 | 复杂度 | 说明 |
-|---|------|--------|------|
-| **crew** | | | |
-| — | 技能树模式 | 中 | `Tree()` 接口 + `browse` 工具 + 分类模式触发（技能 > N） |
-| — | L3 资源文件 | 低 | 技能目录下 references/ 的索引和暴露 |
-| — | Instructions() 路径优化 | 低 | 技能 > 50 时直接读路径而非全量扫描 |
-| **待办（handoff 前期）** | | | |
-| 9 | Asking 不断连 | 中 | 当前 goroutine 退出 + 客户端走新 HTTP 请求。改为同 SSE 连接内收 verdicts |
-| 10 | reef compact | 高 | Tale 消息裁剪 + LLM 摘要 + 上下文重组。当前是桩 |
-| 7 | crew（原） | ✅ 已完成 | 见本次会话成果 |
-| 8 | AgentService | 中 | `src/server/prompt.go` handler 瘦身 |
+### 2. 客户端 vs Model 收到什么消息
 
-## 未来可做
+**加载对话记录**（给客户端）：全量加载 transcript.jsonl 中的所有 record——含 user/model/tool/compact。客户端拿到完整对话 + compaction 标记，按需渲染。
 
-| 项 | 触发条件 |
-|----|----------|
-| 事件总线 | 多客户端同时操作同一 session |
-| `helm.Machine` | 当 `newRunner` 需要超过 3 个共享参数时 |
+**BuildRequest**（给 LLM）：遇到 compact 消息时跳过被覆盖的 `messages[from:to]`，插入 `{role:system, content:summary}` 替代。LLM 看不到被压缩的原始消息，只看到摘要 + 尾部最新消息。
+
+### 3. 摘要中的原文路径应该指向哪个文件
+
+**现状**：HeadTailTruncator 将超长工具输出截断后用 temp file 存储原文（`/tmp/argo-truncation/argo-<ts>-<rand>`），metadata["truncation"]["originalPath"] 指向该 temp 文件。
+
+**讨论**：既然 transcript.jsonl 全量保留消息，原文不应"外存"到 temp file。原文就在消息本身的 `Content` 字段中。Truncator 的 `Truncate()` 应只加 metadata 标记（不删 Content），`BuildRequest()` 做实际截断 + 标记"原文在 transcript 第 N 行"。temp file 完全没有必要。
+
+**未决议**：这个改动是否放入当前迭代。
+
+## 下一步
+
+1. 确定 compact 标记在 transcript.jsonl 的 Record 结构（加 `RecordCompact` 类型 + `CompactFrom/To/Summary` 字段）
+2. 实现 `Tale.MarkCompact()`：将 compact 标记追加到消息列表，供 `Unsaved()`→checkpoint→transcript.jsonl 统一落盘
+3. 实现 `vault.Record` 的 compact 序列化/反序列化（`MessagesToRecords` + `recordsToMessages`）
+4. 实现 `Tale.BuildRequest()` 的 compact 视图：跳过被覆盖的消息，插入摘要
+5. 讨论 Truncator temp file 是否需要移除（改为 metadata 标记 + BuildRequest 时截断）
+6. 考虑迭代闭环，生成 `docs/modules/helm/design.md` 更新
 
 ## 建议技能
 
-- `two-axis-review`：crew 实现完成后做代码审查
-- `grow-doc`：后续迭代生成迭代文档 + 更新模块 design.md
+- `two-axis-review`：代码审查
+- `grow-doc`：迭代闭环时更新模块 design.md
+- `verify`：端到端验证 compaction 行为

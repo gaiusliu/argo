@@ -66,6 +66,12 @@ func (t *Tale) MarkSaved() {
 	t.saved = len(t.messages)
 }
 
+// MarkCompact 记录 compact 标记。不删除消息，BuildRequest 时自动应用压缩视图。
+func (t *Tale) MarkCompact(from, to int, summary string) {
+	// TODO: 将 compact 标记写入消息列表，供 Unsaved()→checkpoint→transcript.jsonl 持久化
+	// TODO: BuildRequest 读到 compact 标记时跳过 messages[from:to]，插入摘要
+}
+
 // AppendTool 追加一条 role=tool 的消息到对话历史末尾，关联指定的 tool_call。
 func (t *Tale) AppendTool(callID string, content string) {
 	t.messages = append(t.messages, knot.Message{

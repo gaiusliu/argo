@@ -9,6 +9,7 @@ import (
 type cliTool struct {
 	name        string
 	description string
+	truncator   Truncator
 }
 
 func (c *cliTool) Name() string                     { return c.name }
@@ -25,5 +26,5 @@ func (c *cliTool) Execute(ctx context.Context, params map[string]any) (knot.Tool
 	}
 	params[knot.ParamCmd] = cmdStr
 	result, err := bashHandler(ctx, params)
-	return postProcess(result), err
+	return c.truncator.Truncate(result), err
 }

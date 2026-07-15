@@ -3,6 +3,7 @@ package knot
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -214,6 +215,24 @@ func GetRawParam(tu ToolUse) string {
 	return ""
 }
 
+// DisplayParam 从工具名和 JSON 参数字符串中提取展示用的参数值。
+// 与 GetRawParam 功能相同，但从 ToolCall 的 Arguments 字段提取而非 ToolUse 的 Parameters 字段。
+func DisplayParam(toolName, argsJSON string) string {
+	var args map[string]any
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return argsJSON
+	}
+	if key, ok := toolParamKeys[toolName]; ok {
+		if val, ok := args[key]; ok && val != nil {
+			if s, ok := val.(string); ok && s != "" {
+				return s
+			}
+			return fmt.Sprint(val)
+		}
+	}
+	return argsJSON
+}
+
 // ConfigPath 返回全局配置文件路径：$ARGO_HOME/config.json 或 ~/.argo/config.json
 func ConfigPath() (string, error) {
 	if home := os.Getenv("ARGO_HOME"); home != "" {
@@ -234,11 +253,21 @@ type LogConfig struct {
 	MaxAge  int    `json:"maxAge"`  // 文件保留天数，0 使用默认 7
 }
 
+// ContextConfig 上下文管理配置，控制 Compactor/Truncator 策略选择
+type ContextConfig struct {
+	Compact          string         `json:"compact"`                    // Compactor 策略名，默认 "llm-summary"
+	CompactThreshold int            `json:"compactThreshold,omitempty"` // 触发 compact 的上下文窗口百分比（1-100），默认 80
+	Truncation       string         `json:"truncation"`                 // Truncator 策略名，默认 "head-tail"
+	CompactOpts      map[string]any `json:"compactOpts,omitempty"`      // 透传给 Compactor 工厂的可选项
+	TruncationOpts   map[string]any `json:"truncationOpts,omitempty"`   // 透传给 Truncator 工厂的可选项
+}
+
 // Config 全局配置，聚合各模块配置
 type Config struct {
-	Deck DeckConfig `json:"deck"`
-	Sail SailConfig `json:"sail"`
-	Log  LogConfig  `json:"log"`
+	Context ContextConfig `json:"context"`
+	Deck    DeckConfig    `json:"deck"`
+	Sail    SailConfig    `json:"sail"`
+	Log     LogConfig     `json:"log"`
 }
 
 // DeckConfig deck 模块配置

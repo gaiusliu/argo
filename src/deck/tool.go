@@ -2,6 +2,7 @@ package deck
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"argo/src/knot"
@@ -89,8 +90,12 @@ func RegisterTools() error {
 
 // RegisterTools 先注册内置工具（遇错即停），再注册 CLI 工具（校验/冲突不打断，收尾汇总）
 func (r *ToolRegistry) RegisterTools() error {
-	// 内置工具：单个失败即代码 bug，应立即暴露
+	// 从全局配置解析 Truncator 策略
+	trunc := resolveTruncator()
+
+	// 内置工具：注入 truncator 后注册
 	for _, bt := range builtinTools {
+		bt.truncator = trunc
 		if err := r.RegisterTool(bt); err != nil {
 			return fmt.Errorf("register tools failed: %w", err)
 		}
@@ -114,6 +119,7 @@ func (r *ToolRegistry) RegisterTools() error {
 		if err := r.RegisterTool(&cliTool{
 			name:        name,
 			description: e.Description,
+			truncator:   trunc,
 		}); err != nil {
 			skipped = append(skipped, err)
 		}
@@ -124,4 +130,19 @@ func (r *ToolRegistry) RegisterTools() error {
 	}
 
 	return nil
+}
+
+// resolveTruncator 从配置中解析 Truncator，失败时回退 head-tail
+func resolveTruncator() Truncator {
+	cfg, err := knot.GetConfig()
+	if err != nil {
+		slog.Warn("resolve truncator: get config failed, using head-tail", "error", err)
+		return HeadTailTruncator{}
+	}
+	t, err := ResolveTruncator(cfg.Context.Truncation, cfg.Context.TruncationOpts)
+	if err != nil {
+		slog.Warn("resolve truncator failed, using head-tail", "error", err)
+		return HeadTailTruncator{}
+	}
+	return t
 }

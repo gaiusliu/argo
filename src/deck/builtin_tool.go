@@ -27,11 +27,15 @@ import (
 	"argo/src/knot"
 )
 
+// truncatedMarker 读取超限时的截断标记，与 reef 中的同名常量值一致
+const truncatedMarker = "... (truncated) ..."
+
 type builtinTool struct {
 	name         string
 	description  string
 	paramsSchema map[string]any
 	handler      func(ctx context.Context, params map[string]any) (knot.ToolResult, error)
+	truncator    Truncator
 }
 
 func (bt *builtinTool) Name() string                     { return bt.name }
@@ -40,7 +44,7 @@ func (bt *builtinTool) Source() knot.ToolSource          { return knot.SourceBui
 func (bt *builtinTool) ParametersSchema() map[string]any { return bt.paramsSchema }
 func (bt *builtinTool) Execute(ctx context.Context, params map[string]any) (knot.ToolResult, error) {
 	result, err := bt.handler(ctx, params)
-	return postProcess(result), err
+	return bt.truncator.Truncate(result), err
 }
 
 var BuiltinToolTimeout = 5 * time.Minute

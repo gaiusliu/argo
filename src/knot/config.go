@@ -76,6 +76,22 @@ func mergeConfig(dst, src *Config) {
 		}
 		dst.Sail.Provider[name] = dp
 	}
+	// Context 子配置：用户提供的字段覆盖默认值
+	if src.Context.Compact != "" {
+		dst.Context.Compact = src.Context.Compact
+	}
+	if src.Context.CompactThreshold > 0 {
+		dst.Context.CompactThreshold = src.Context.CompactThreshold
+	}
+	if src.Context.Truncation != "" {
+		dst.Context.Truncation = src.Context.Truncation
+	}
+	if src.Context.CompactOpts != nil {
+		dst.Context.CompactOpts = src.Context.CompactOpts
+	}
+	if src.Context.TruncationOpts != nil {
+		dst.Context.TruncationOpts = src.Context.TruncationOpts
+	}
 	// Deck 子配置
 	if src.Deck.CLI != nil {
 		dst.Deck.CLI = src.Deck.CLI
@@ -121,6 +137,11 @@ var knownProviders = map[string]string{
 // GenerateDefaultConfig 扫描环境变量，生成默认配置
 func GenerateDefaultConfig() *Config {
 	cfg := &Config{
+		Context: ContextConfig{
+			Compact:          "llm-summary",
+			CompactThreshold: 80,
+			Truncation:       "head-tail",
+		},
 		Log: LogConfig{
 			Level:   "error",
 			MaxSize: 100,

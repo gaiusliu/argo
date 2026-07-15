@@ -16,16 +16,24 @@ type PhaseRunnerModel struct {
 	Provider     sail.Provider
 	Tools        []knot.Tool
 	SystemPrompt string
+	Compactor    Compactor
 }
 
 func NewPhaseRunnerModel() *PhaseRunnerModel {
 	tools := deck.List()
 	skills := crew.List()
 	sp := buildSystemPrompt(tools, skills)
+
 	return &PhaseRunnerModel{
 		SystemPrompt: sp,
 		Tools:        tools,
 	}
+}
+
+// resolveCompactor 构造 LLM Summary Compactor。
+// provider 为摘要生成所用的模型连接，由 Run() 在 Provider 就绪后传入。
+func resolveCompactor(provider sail.Provider) Compactor {
+	return &LLMSummaryCompactor{Provider: provider}
 }
 
 func (pr *PhaseRunnerModel) Run(ctx context.Context,
@@ -42,9 +50,22 @@ func (pr *PhaseRunnerModel) Run(ctx context.Context,
 	}
 	v.Model = pr.Provider.Model()
 
+	// 在 Provider 就绪后解析 Compactor
+	pr.Compactor = resolveCompactor(pr.Provider)
+
 	// 系统提示词不下沉到 Tale 中，由 Tale.BuildRequest 前插
 	slog.Info("build system prompt", "system prompt", pr.SystemPrompt)
 	msgs := v.Tale().BuildRequest(pr.SystemPrompt)
+
+	// Compact 触发时替换消息列表并通知 Tale
+	summary, from, to, err := pr.Compactor.Compact(ctx, msgs, v.LastUsage.InputTokens)
+	if err == nil && from < to {
+		msgs = append(
+			append(msgs[:from], knot.Message{Role: knot.MessageRoleSystem, Content: summary}),
+			msgs[to:]...,
+		)
+		v.Tale().MarkCompact(from, to, summary)
+	}
 
 	events := pr.Provider.Chat(ctx, msgs, pr.Tools)
 
