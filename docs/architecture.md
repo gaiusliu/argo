@@ -1,19 +1,18 @@
 # Argo 技术架构
 
-## 模块清单（10 模块 + knot + server）
+## 模块清单（9 模块 + knot + server）
 
 | 模块 | 职责 | 状态 |
 |------|------|------|
 | **knot** | 跨模块共享类型：Message / Event / ToolUse / Config / ToolVerdict | ✅ 稳定 |
-| **deck** | 工具注册、发现、调用。内置工具 + CLI 外部工具，统一 Tool 接口 | ✅ 稳定 |
+| **deck** | 工具注册、发现、调用 + Truncator 截断。内置工具 + CLI 外部工具，统一 Tool 接口 | ✅ 稳定 |
 | **sail** | LLM 接入层。Provider 接口（Name/Model/Chat）+ ProviderOpenAI 实现，`NewProvider` 工厂按 `api` 协议路由 | ✅ 稳定 |
 | **vault** | 纯存储层。transcript.jsonl 读写 + Message ↔ Record 转换 | ✅ 稳定 |
 | **brig** | 权限门控。Gate 接口 + Warden 分层裁决（Iron 红线 → Cord 可配置 → 用户审批 → Ask）+ RuleLoader 规则来源 | ✅ 稳定 |
 | **voyage** | 会话运行时聚合体。Voyage = Info + Vault + Gate + Tale + Phase/Model/ToolUses，会话 CRUD + 控制流持久化 | ✅ 稳定 |
-| **helm** | Agent 核心循环。状态机四 Phase + PhaseRunner（`Run(ctx, v, emit) bool`）+ checkpoint | ✅ 稳定 |
+| **helm** | Agent 核心循环。状态机四 Phase + PhaseRunner（`Run(ctx, v, emit) bool`）+ Compactor 压缩 + checkpoint | ✅ 稳定 |
 | **server** | 无状态 HTTP 后端。chi 路由 + SSE 流式事件 | ✅ 稳定 |
 | **wake** | 日志模块。日期+大小自动轮转，过期清理 | ✅ 稳定 |
-| **reef** | 上下文压缩。当前为桩（`Compact` 原样返回） | 🚧 桩 |
 | **crew** | 技能管理。SKILL.md 扫描 + 渐进式披露 + skill 工具 + /skill-name | ✅ 稳定 |
 
 ## 模块关系
@@ -23,8 +22,7 @@ CLI ──→ Server ──→ Helm ──→ Voyage ─┬──→ Vault
                 │                   └──→ Brig
                 │
                 ├── Sail
-                ├── Deck ──→ Crew
-                └── Reef
+                └── Deck ──→ Crew
 
 Server ──→ Crew        (/skill-name 快捷入口)
 
@@ -53,7 +51,7 @@ handlePrompt
 helm.Run() goroutine 循环：
   │
   ├─ PhaseModel ────────── PhaseRunnerModel
-  │   ├─ Tale.BuildRequest(sysPrompt) + sail.Chat（SSE 流式消费）
+  │   ├─ Tale.BuildRequest → Compactor.Compact() → sail.Chat（SSE 流式消费）
   │   ├─ 无工具调用 → Tale.AppendAssistant + Phase = Done
   │   └─ 有工具调用 → Tale.AppendAssistant + Phase = ExecTools
   │
@@ -115,7 +113,6 @@ src/
 ├── brig/           权限门控（Gate 接口 + Warden + RuleLoader）
 ├── voyage/         会话运行时聚合体（Voyage + Info + CRUD）
 ├── helm/           核心循环（状态机 + PhaseRunner + checkpoint）
-├── reef/           上下文压缩（桩）
 ├── wake/           日志轮转（LogWriter）
 ├── tale/           对话历史封装（Tale：Messages + Saved 游标）
 ├── crew/           技能管理（SkillInfo + Crew + 渐进式披露）
