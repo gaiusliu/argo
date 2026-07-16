@@ -40,6 +40,7 @@ const (
 	MessageRoleAssistant MessageRole = "assistant"
 	MessageRoleTool      MessageRole = "tool"
 	MessageRoleSystem    MessageRole = "system"
+	MessageRoleCompact   MessageRole = "compact"
 )
 
 // ToolCallDetail assistant 消息中单个工具调用的元数据
@@ -51,14 +52,17 @@ type ToolCall struct {
 
 // Message 单条对话消息
 type Message struct {
-	// Role 取值为 MessageRoleSystem | MessageRoleUser | MessageRoleAssistant | MessageRoleTool
+	// Role 取值为 MessageRoleSystem | MessageRoleUser | MessageRoleAssistant | MessageRoleTool | MessageRoleCompact
 	Role MessageRole
-	// 会话内容
+	// 会话内容；role=compact 时为 LLM 摘要正文
 	Content string
 	// role=tool 时必填，关联对应的 assistant tool_call
 	ToolCallID string
 	// role=assistant 时，记录本轮发起的工具调用
 	ToolCalls []ToolCall
+	// role=compact 时，被压缩的消息区间 [CompactFrom, CompactTo)
+	CompactFrom int `json:"compact_from,omitempty"`
+	CompactTo   int `json:"compact_to,omitempty"`
 }
 
 // ChatRequest LLM 调用请求

@@ -112,3 +112,276 @@ helm.NewPhaseRunnerModel() → resolveCompactor() → knot.GetConfig() → reef.
 | 2026-07-15 | 默认策略调整：Compact `"passthrough"` → `"llm-summary"`，阈值 80%。各模块内部 `knot.GetConfig()` 自行 Resolve |
 | 2026-07-15 | 全部功能完成。接口 + 注册表 + 策略实现 + 注入 + 旧文件清理 |
 | 2026-07-15 | 迭代开始 |
+| 2026-07-16 | 新增：compact 标记持久化 + BuildRequest compact 视图（剩余工作） |
+
+---
+
+## Phase 2：Compact 标记持久化 + BuildRequest 应用
+
+### 背景
+
+Phase 1 完成了 LLMSummaryCompactor（`Compact()` 返回 `(summary, from, to, err)`），但 `Tale.MarkCompact()` 是空桩，`BuildRequest()` 不做 compact 处理。当前 `Run()` 手写消息拼接作为临时方案，重启后 compact 信息丢失。
+
+### 核心设计决策
+
+compact 标记直接作为 `knot.Message{Role: "compact"}` 存入 Tale.messages。**不加单独列表，不加额外游标**。Tale.Unsaved() 自然包含 compact 消息，checkpoint/Vault.Load/AppendMessages/Tale.New 签名全部不变。
+
+### 已确定决策
+
+- DEC-041：compact 原文保留在 transcript.jsonl 中，compact 以新增 `RecordCompact` 类型与 user/model/tool 并列。
+
+---
+
+## Layer 1：架构设计（确认于 2026-07-16）
+
+### 受影响模块
+
+| 模块 | 变更角色 | 说明 |
+|------|---------|------|
+| **knot** | 修改 | Message 结构体新增 `CompactFrom`/`CompactTo` 字段 + `MessageRoleCompact` 角色常量 |
+| **vault** | 修改 | 新增 `RecordCompact` 类型；Record 结构体增加 compact 字段；MessagesToRecords / recordsToMessages 各加一个 case |
+| **tale** | 修改 | `MarkCompact()` 实现（往 messages 追加 compact 消息）；`BuildRequest()` 实现 compact 视图（按时间顺序应用 compact） |
+| **helm** | 修改 | `Run()` 移除手动 splice；Compactor 输入改为 `Tale.BuildRequest("")`（压缩视图） |
+| **Vault 接口 / Voyage / Server** | 不变 | AppendMessages、Load、New 签名全部不变 |
+
+### 模块关系变更
+
+```
+改造前：
+  tale ──BuildRequest()──→ helm (Run)
+  tale ──Unsaved()───────→ helm (checkpoint) ──→ voyage ──→ vault
+
+改造后：
+  tale ──BuildRequest("")───→ helm (Run)        ← Compactor 用压缩视图
+  tale ──BuildRequest(sp)───→ helm (Run)        ← LLM 用压缩视图（含 system prompt）
+  tale ──MarkCompact()──────→ helm (Run)        ← 实现（追加 compact 消息）
+  tale ──Unsaved()──────────→ helm (checkpoint) ← 自动包含 compact 消息，不改
+         │                              │
+         └──────────────────────────────┘
+                                        ↓
+                                   voyage ──→ vault
+                                            │
+                                  transcript.jsonl
+                                  [user, model, tool, compact]
+                                            │
+                                  Load() → []Message  ← 签名不变
+                                            │
+                                  Tale.New(msgs, "")  ← 签名不变
+```
+
+### 数据流变更
+
+```
+【写入路径】
+Run() 中:
+  compactView = Tale.BuildRequest("")                  ← 压缩视图（不含 system prompt）
+  summary, from, to = Compactor.Compact(ctx, compactView, inputTokens)
+    → Compactor 看到的是已应用之前 compact 的压缩视图
+    → 返回的 from/to 对应当前压缩视图的索引
+MarkCompact(from, to, summary)
+  → t.messages 追加 Message{Role:compact, Content:summary, CompactFrom:from, CompactTo:to}
+  → Unsaved() 自动包含该 compact 消息                    ← 零改动
+  → checkpoint() → AppendMessages()                      ← 零改动
+  → MessagesToRecords() 加 case MessageRoleCompact      → Record{Type:compact, ...}
+  → 写入 transcript.jsonl
+
+【读取路径】
+Vault.Load()                                            ← 签名不变
+  → recordsToMessages() 加 case RecordCompact
+    → Message{Role:compact, Content:..., CompactFrom:..., CompactTo:...}
+  → Tale.New(msgs, "")                                  ← 签名不变
+
+【LLM 请求 / Compactor 输入路径（同一函数）】
+BuildRequest(systemPrompt)
+  → 取 messages 中非 compact 角色的消息
+  → 按时间顺序依次应用每个 compact（C1 → C2 → ...）
+      每个 compact 的 from/to 对应当前中间结果的索引
+  → 前置 system prompt（如提供）
+  → 返回压缩后的消息列表
+```
+
+### 前提假设
+
+- ⚠️ **Compactor 输入为压缩视图**：`Run()` 调用 `Tale.BuildRequest("")`（无 system prompt）作为 Compactor 输入。这与 PI、Opencode 的做法一致——Compactor 看到的是已应用之前所有 compact 的压缩视图。Compactor 的 `compactHeadKept` 从 `3` 改为 `2`（无 system prompt）。
+
+- ⚠️ **compact 索引语义**：每个 compact 的 from/to 是相对于「该 compact 创建时的压缩视图」的索引。BuildRequest 按时间顺序应用 compact，每个 compact 作用于前一步的结果，索引自然匹配。这与 PI 的 `buildSessionContext` 行为一致。
+
+- ⚠️ **Message 结构体的 omitempty 保证**：`CompactFrom`/`CompactTo` 带 `omitempty`，非 compact 消息序列化时不出现在 JSON。`ToolCallID` 已经是这种模式——只对 tool 角色有意义。
+
+- ⚠️ **旧 transcript 兼容**：旧文件中无 RecordCompact 条目。`recordsToMessages` 的 switch 对未知类型跳过，行为正确。
+
+### 范围边界
+
+**包含：**
+- knot.Message 新增 `CompactFrom`/`CompactTo` 字段 + `MessageRoleCompact`
+- vault.Record 新增 `RecordCompact` + compact 字段
+- vault.MessagesToRecords / recordsToMessages 各加一个 case
+- Tale.MarkCompact() 实现
+- Tale.BuildRequest() 按时间顺序应用 compact
+- helm Run() Compactor 输入改为压缩视图 + 移除手动 splice
+
+**不包含：**
+- Truncator temp file 移除
+- 增量摘要
+- 客户端 compact 可视化
+
+---
+
+## Layer 2：接口设计（确认于 2026-07-16）
+
+### 关键接口变更
+
+**knot/types.go — Message 结构体**
+
+```go
+const MessageRoleCompact MessageRole = "compact"  // 新增
+
+type Message struct {
+    Role        MessageRole
+    Content     string
+    ToolCallID  string
+    ToolCalls   []ToolCall
+    CompactFrom int  `json:"compact_from,omitempty"`  // 新增
+    CompactTo   int  `json:"compact_to,omitempty"`    // 新增
+}
+```
+
+**vault/record.go — Record 结构体**
+
+```go
+const RecordCompact string = "compact"  // 新增
+
+// Record 新增字段:
+CompactFrom    int    `json:"compact_from,omitempty"`    // 新增
+CompactTo      int    `json:"compact_to,omitempty"`      // 新增
+CompactSummary string `json:"compact_summary,omitempty"` // 新增
+```
+
+**tale/tale.go — 2 个方法变更**
+
+```go
+// MarkCompact 实现（替换空桩）
+func (t *Tale) MarkCompact(from, to int, summary string)
+
+// BuildRequest 重写（按时间顺序应用 compact 视图）
+func (t *Tale) BuildRequest(systemPrompt string) []knot.Message
+```
+
+**Vault 接口 — 不变**
+
+```go
+type Vault interface {
+    Append(records []Record) error
+    Load() ([]knot.Message, error)   // 签名不变
+}
+```
+
+**Voyage.AppendMessages — 不变**
+
+**Tale.New — 不变**
+
+### 核心数据结构
+
+无新增结构体。唯一的类型扩展是 `knot.Message` 和 `vault.Record` 各加几个可选字段。
+
+### 关键流程
+
+**流程 1：MarkCompact**
+
+```
+输入: from (int), to (int), summary (string)
+前提: from/to 基于 Tale 内部 messages 索引（不含 system prompt）
+
+1. t.messages = append(t.messages, Message{
+       Role:        compact,
+       Content:     summary,    // LLM 生成的 Markdown 摘要
+       CompactFrom: from,
+       CompactTo:   to,
+   })
+```
+
+**流程 2：BuildRequest（同时为 Compactor 和 LLM 服务）**
+
+```
+输入: systemPrompt (string)，为空时不含 system prompt（供 Compactor 用）
+输出: []Message
+
+1. 取 t.messages 中非 compact 角色的消息作为 result
+2. 按 compact 在 t.messages 中的顺序（时间顺序）依次应用:
+     - result = result[:from] + [{Role:system, Content:summary}] + result[to:]
+     - 每个 compact 的 from/to 对应当前 result 的索引
+3. 如果 systemPrompt 非空，前置 {Role:system, Content:systemPrompt}
+4. 返回 result
+```
+
+**流程 3：Run() 中的 compact 触发**
+
+```
+1. compactView = Tale.BuildRequest("")                    // 压缩视图，不含 system prompt
+2. summary, from, to, err = Compactor.Compact(ctx, compactView, inputTokens)
+3. if triggered:
+     Tale.MarkCompact(from, to, summary)                   // from/to 对应当前压缩视图
+4. msgs = Tale.BuildRequest(pr.SystemPrompt)               // LLM 用，含 system prompt
+5. Provider.Chat(ctx, msgs, tools)
+```
+
+Compactor 内部 `compactHeadKept = 2`（无 system prompt）。
+
+**流程 4：MessagesToRecords（写入）**
+
+```
+在现有 switch msg.Role 中新增:
+  case MessageRoleCompact:
+      → Record{Type: RecordCompact, CompactFrom, CompactTo,
+               CompactSummary: msg.Content}
+```
+
+**流程 5：recordsToMessages（读取）**
+
+```
+在现有 switch r.Type 中新增:
+  case RecordCompact:
+      → Message{Role: compact, Content: r.CompactSummary,
+                CompactFrom: r.CompactFrom, CompactTo: r.CompactTo}
+```
+
+### 索引验证（含两轮 compact）
+
+```
+第一轮:
+  Tale.messages = [U1, A1, U2, A2, T1, U3, A3, U4]
+  Compactor 输入 = [U1, A1, U2, A2, T1, U3, A3, U4]    // 无历史 compact
+  → 返回 from=2, to=6
+  → MarkCompact(2, 6, "S1")
+  Tale.messages = [U1, A1, U2, A2, T1, U3, A3, U4, C1(2,6,"S1")]
+
+第二轮（又聊了 5 轮后）:
+  Tale.messages = [U1, A1, U2, A2, T1, U3, A3, U4, C1, U5, A5, T2, U6, A6]
+  Compactor 输入 = BuildRequest("")
+    = [U1, A1, S1, U5, A5, T2, U6, A6]                 // C1 已应用
+    索引:   0   1   2   3   4   5   6   7
+  → 返回 from=2, to=6
+  → MarkCompact(2, 6, "S2")
+  Tale.messages = [U1, A1, U2, A2, T1, U3, A3, U4, C1, U5, A5, T2, U6, A6, C2(2,6,"S2")]
+
+BuildRequest 最终输出（systemPrompt="SP"）:
+  result = [U1, A1, U2, A2, T1, U3, A3, U4, U5, A5, T2, U6, A6]  // 非 compact
+  应用 C1: result = [U1, A1, S1, U5, A5, T2, U6, A6]              // C1.from=2,to=6
+  应用 C2: result = [U1, A1, S2, A6]                              // C2.from=2,to=6
+  前置 SP: [SP, U1, A1, S2, A6]                                    ✅
+```
+
+### 变更预估
+
+| 文件 | 新增行数 |
+|------|---------|
+| knot/types.go | ~5 |
+| vault/record.go | ~8 |
+| vault/convert.go | ~10 |
+| vault/file_vault.go | ~6 |
+| tale/tale.go | ~30 |
+| helm/compact_llm_summary.go | ~2 |
+| helm/phase_model.go | ~10 |
+| **合计** | **~71** |
+
+单文件均 ≤30 行。

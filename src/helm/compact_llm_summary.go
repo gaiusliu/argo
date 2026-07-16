@@ -51,7 +51,7 @@ Rules:
 const (
 	compactThreshold = 80    // 触发 compact 的上下文窗口百分比
 	tailTokenBudget  = 8_000 // tail 保留的 token 预算
-	compactHeadKept  = 3     // 头部保护的消息条数（primacy）
+	compactHeadKept  = 2     // 头部保护的消息条数（primacy，不含 system prompt）
 )
 
 // LLMSummaryCompactor 用 LLM 将旧消息压缩为结构化摘要，
@@ -60,11 +60,16 @@ type LLMSummaryCompactor struct {
 	Provider sail.Provider
 }
 
+// ShouldCompact 判断是否需要触发 compact，仅检查阈值，不执行实际压缩。
+func (c *LLMSummaryCompactor) ShouldCompact(inputTokens int) bool {
+	maxTokens := sail.Window(c.Provider.Model()).MaxTokens
+	return maxTokens > 0 && inputTokens >= maxTokens*compactThreshold/100
+}
+
 // Compact 判断是否需要压缩，需要时调用 LLM 生成摘要。
 // 返回摘要正文 + 被覆盖的消息区间 [from, to)。未触发时 from == to == 0。
 func (c *LLMSummaryCompactor) Compact(ctx context.Context, messages []knot.Message, inputTokens int) (string, int, int, error) {
-	maxTokens := sail.Window(c.Provider.Model()).MaxTokens
-	if maxTokens <= 0 || inputTokens < maxTokens*compactThreshold/100 {
+	if !c.ShouldCompact(inputTokens) {
 		return "", 0, 0, nil
 	}
 

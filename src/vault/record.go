@@ -6,9 +6,10 @@ import (
 
 // transcript record 类型常量。
 const (
-	RecordUser  string = "user"
-	RecordModel string = "model"
-	RecordTool  string = "tool"
+	RecordUser    string = "user"
+	RecordModel   string = "model"
+	RecordTool    string = "tool"
+	RecordCompact string = "compact"
 )
 
 // ToolVerdict 工具调用的审批结果。
@@ -32,6 +33,11 @@ type Record struct {
 	ToolCallID string `json:"tool_call_id,omitempty"` // 关联 model.tool_calls
 	Name       string `json:"name,omitempty"`         // 工具名
 	Status     string `json:"status,omitempty"`       // success / error
+
+	// compact
+	CompactFrom    int    `json:"compact_from,omitempty"`    // 被压缩区间起始索引
+	CompactTo      int    `json:"compact_to,omitempty"`      // 被压缩区间结束索引
+	CompactSummary string `json:"compact_summary,omitempty"` // LLM 摘要正文
 }
 
 // ToolCallRecord LLM 工具调用请求。

@@ -22,6 +22,13 @@ func MessagesToRecords(msgs []knot.Message, toolUsesByIDs map[string]knot.ToolUs
 			records = append(records, modelRecord(msg, modelName))
 		case knot.MessageRoleTool:
 			records = append(records, toolRecord(msg, toolUsesByIDs[msg.ToolCallID]))
+		case knot.MessageRoleCompact:
+			records = append(records, Record{
+				Type:          RecordCompact,
+				CompactFrom:   msg.CompactFrom,
+				CompactTo:     msg.CompactTo,
+				CompactSummary: msg.Content,
+			})
 		}
 	}
 	return records

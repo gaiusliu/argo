@@ -757,3 +757,34 @@ scanner.Scan() 内部调用 Read()  ← transport.go:3064
 - `interrupt` 端点：删 state.json → PendingMessages 丢失 → Resume 回到断点前
 
 **替代方案**：vault mark & rollback — 需要在 vault 中实现 truncation，复杂度高，被否决。
+
+## DEC-041：Compact 原文保留在 transcript.jsonl——加 RecordCompact 标记，不拆分文件
+
+**状态**：✅ 现行
+
+**日期**：2026-07-16
+
+**决策**：LLM Summary Compactor 产生的 compact 摘要以新增 `RecordCompact` 类型写入 transcript.jsonl，与 user/model/tool 并列。compact 被覆盖的原始消息保留在原文件中不删除、不移走。BuildRequest 时读到 compact 标记自动跳过 `[from,to)` 区间并插入摘要。
+
+**背景**：迭代 014 实现了 LLMSummaryCompactor（`Compact()` 返回 `(summary, from, to)`），但 `Tale.MarkCompact()` 是空桩——compact 标记无法持久化。决策点：compact 标记和原文存哪里。
+
+**调研**：深度调研 7 个主流 agent（PI、Kilocode、Opencode、Codex CLI、Claude Code、OpenClaw、Hermes-agent）的 compact 策略，**全部保留原文**，compact 仅作为标记而非删除：
+
+| Agent | 存储 | 策略 |
+|-------|------|------|
+| PI | JSONL tree | `CompactionEntry` + `firstKeptEntryId`，原始 entry 不动 |
+| Opencode | JSONL | `/context` = compact 后，`/messages` = 全量 |
+| Codex CLI | JSONL | 全量用于 replay/audit，LLM 只看摘要+近期消息 |
+| Claude Code | JSONL + hooks | 插件在 compact 前抓取 transcript |
+| OpenClaw | JSONL | `compaction` entry + `firstKeptEntryId`，可选 `truncateAfterCompaction` |
+| Hermes-agent | SQLite | `SessionDB` + session lineage |
+
+**选择**：方案 A——原地标记，不拆文件。
+
+**理由**：
+- Argo vault 模型的核心假设是「时序由 append 顺序保证」。拆成两个文件后需要管理双游标、merge join 加载、双写一致性，破坏现有 `Tale.Unsaved()` → `vault.MessagesToRecords()` → `vault.Append()` 的简单流水线。
+- 单文件 JSONL + 游标增量写入是 Argo 已建立的模式。加一个 Record 类型只需 ~30-50 行代码；拆文件需 ~150-200 行 + 新增双文件协调逻辑。
+- 全部 7 个参考 agent 都用此模式——这是经过生产验证的做法。
+- 文件大小：中等会话（几十轮）JSONL 仅数百 KB。未来如需优化可加后台 squash 压缩归档，不改变当前架构。
+
+**替代方案**：方案 B——compact 原文另存 `archive.jsonl` 或 SQLite，transcript.jsonl 只保留"热"消息。因破坏 vault 时序模型、双写一致性风险、实现复杂度高（3-4 倍代码量），被否决。

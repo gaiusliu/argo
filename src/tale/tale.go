@@ -44,10 +44,16 @@ func (t *Tale) AppendAssistant(content string, toolCalls []knot.ToolCall) {
 	})
 }
 
-// BuildRequest 构造 LLM 请求消息列表：system prompt + 完整对话历史。
+// BuildRequest 构造 LLM 请求消息列表。
+// 按时间顺序应用 compact 标记（C1→C2→...），然后前置 system prompt。
+// systemPrompt 为空时返回压缩视图不含 system prompt（供 Compactor 使用）。
 func (t *Tale) BuildRequest(systemPrompt string) []knot.Message {
+	compacted := t.applyCompactView()
+	if systemPrompt == "" {
+		return compacted
+	}
 	sysMsg := knot.Message{Role: knot.MessageRoleSystem, Content: systemPrompt}
-	return append([]knot.Message{sysMsg}, t.messages...)
+	return append([]knot.Message{sysMsg}, compacted...)
 }
 
 // Unsaved 返回尚未持久化的消息差量，供 checkpoint 增量写入。
@@ -68,8 +74,39 @@ func (t *Tale) MarkSaved() {
 
 // MarkCompact 记录 compact 标记。不删除消息，BuildRequest 时自动应用压缩视图。
 func (t *Tale) MarkCompact(from, to int, summary string) {
-	// TODO: 将 compact 标记写入消息列表，供 Unsaved()→checkpoint→transcript.jsonl 持久化
-	// TODO: BuildRequest 读到 compact 标记时跳过 messages[from:to]，插入摘要
+	t.messages = append(t.messages, knot.Message{
+		Role:        knot.MessageRoleCompact,
+		Content:     summary,
+		CompactFrom: from,
+		CompactTo:   to,
+	})
+}
+
+// applyCompactView 按时间顺序应用 compact 标记，返回压缩后的消息列表。
+// 每个 compact 的 from/to 对应当前中间结果的索引。
+func (t *Tale) applyCompactView() []knot.Message {
+	// 收集非 compact 消息作为起点
+	var result []knot.Message
+	for _, m := range t.messages {
+		if m.Role != knot.MessageRoleCompact {
+			result = append(result, m)
+		}
+	}
+	// 按时间顺序（t.messages 中的顺序）依次应用 compact
+	for _, m := range t.messages {
+		if m.Role != knot.MessageRoleCompact {
+			continue
+		}
+		if m.CompactFrom < 0 || m.CompactTo > len(result) || m.CompactFrom >= m.CompactTo {
+			continue
+		}
+		summaryMsg := knot.Message{Role: knot.MessageRoleSystem, Content: m.Content}
+		result = append(
+			append(result[:m.CompactFrom], summaryMsg),
+			result[m.CompactTo:]...,
+		)
+	}
+	return result
 }
 
 // AppendTool 追加一条 role=tool 的消息到对话历史末尾，关联指定的 tool_call。

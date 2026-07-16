@@ -53,19 +53,18 @@ func (pr *PhaseRunnerModel) Run(ctx context.Context,
 	// 在 Provider 就绪后解析 Compactor
 	pr.Compactor = resolveCompactor(pr.Provider)
 
-	// 系统提示词不下沉到 Tale 中，由 Tale.BuildRequest 前插
+	// Compact 触发时：用已应用历史 compact 的压缩视图作为输入
+	if pr.Compactor.ShouldCompact(v.LastUsage.InputTokens) {
+		competView := v.Tale().BuildRequest("")
+		summary, from, to, err := pr.Compactor.Compact(ctx, competView, v.LastUsage.InputTokens)
+		if err == nil && from < to {
+			v.Tale().MarkCompact(from, to, summary)
+		}
+	}
+
+	// 构建 LLM 请求消息——含 system prompt，自动应用 compact 视图
 	slog.Info("build system prompt", "system prompt", pr.SystemPrompt)
 	msgs := v.Tale().BuildRequest(pr.SystemPrompt)
-
-	// Compact 触发时替换消息列表并通知 Tale
-	summary, from, to, err := pr.Compactor.Compact(ctx, msgs, v.LastUsage.InputTokens)
-	if err == nil && from < to {
-		msgs = append(
-			append(msgs[:from], knot.Message{Role: knot.MessageRoleSystem, Content: summary}),
-			msgs[to:]...,
-		)
-		v.Tale().MarkCompact(from, to, summary)
-	}
 
 	events := pr.Provider.Chat(ctx, msgs, pr.Tools)
 

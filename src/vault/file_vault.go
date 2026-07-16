@@ -101,6 +101,13 @@ func recordsToMessages(records []Record) []knot.Message {
 				Content:    r.Content,
 				ToolCallID: r.ToolCallID,
 			})
+		case RecordCompact:
+			msgs = append(msgs, knot.Message{
+				Role:        knot.MessageRoleCompact,
+				Content:     r.CompactSummary,
+				CompactFrom: r.CompactFrom,
+				CompactTo:   r.CompactTo,
+			})
 		}
 	}
 	return msgs
