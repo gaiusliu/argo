@@ -52,7 +52,7 @@ type model struct {
 
 // ---- 构造函数 ----
 
-func initialModel(client *argoClient, sessionID string) *model {
+func initialModel(client *argoClient, sessionID string, historyMsgs []knot.Message) *model {
 	ta := textarea.New()
 	ta.ShowLineNumbers = false
 	ta.Prompt = ""
@@ -78,11 +78,18 @@ func initialModel(client *argoClient, sessionID string) *model {
 	vp := viewport.New()
 	vp.SoftWrap = true
 
+	var output strings.Builder
+	if len(historyMsgs) > 0 {
+		// 使用默认宽度 80（终端宽度尚未由 WindowSizeMsg 告知）
+		output.WriteString(formatHistoryMessages(historyMsgs, 80))
+	}
+
 	return &model{
 		viewport:  vp,
 		textarea:  ta,
 		client:    client,
 		sessionID: sessionID,
+		output:    output,
 		seenTools: make(map[string]bool),
 		statusBar: "Ready",
 	}
@@ -167,10 +174,10 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-		case "ctrl+c":
-			return m, tea.Quit
+	case "ctrl+c":
+		return m, tea.Quit
 
-		case "enter":
+	case "enter":
 		if m.asking {
 			return m.handleAskVerdict()
 		}
@@ -385,6 +392,48 @@ func (m *model) handleAskVerdict() (tea.Model, tea.Cmd) {
 	m.viewport.SetContent(m.output.String())
 	m.viewport.GotoBottom()
 	return m, nil
+}
+
+// formatHistoryMessages 将历史消息列表转换为与实时对话相同样式的输出字符串。
+// width 为分隔线的目标宽度，<=0 时默认 80。
+func formatHistoryMessages(msgs []knot.Message, width int) string {
+	if width <= 0 {
+		width = 80
+	}
+	sep := strings.Repeat("─", width)
+
+	// 构建 toolCallID → toolName 映射，供 tool 消息查找工具名
+	toolNames := make(map[string]string)
+	for _, m := range msgs {
+		if m.Role == knot.MessageRoleAssistant {
+			for _, tc := range m.ToolCalls {
+				toolNames[tc.ID] = tc.Name
+			}
+		}
+	}
+
+	var buf strings.Builder
+	for _, m := range msgs {
+		switch m.Role {
+		case knot.MessageRoleUser:
+			buf.WriteString("\n\n" + sep + "\n")
+			buf.WriteString(userMsgStyle.Render("❯ "+m.Content) + "\n")
+			buf.WriteString(sep + "\n")
+		case knot.MessageRoleAssistant:
+			// 工具调用标记
+			for _, tc := range m.ToolCalls {
+				buf.WriteString(formatHistoryToolStart(tc))
+			}
+			// 模型回复文本
+			if m.Content != "" {
+				buf.WriteString(m.Content)
+			}
+		case knot.MessageRoleTool:
+			name := toolNames[m.ToolCallID]
+			buf.WriteString(formatHistoryToolDone(name, m.Content))
+		}
+	}
+	return buf.String()
 }
 
 // ---- 辅助 ----

@@ -55,16 +55,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 恢复已有会话时展示对话历史
+	// 恢复已有会话时加载历史消息，传入 TUI 统一渲染
+	var historyMsgs []knot.Message
 	if isExisting {
 		resp, err := client.resumeSession(sessionID)
-		if err == nil && len(resp.Messages) > 0 {
-			showMessages(resp.Messages)
+		if err == nil {
+			historyMsgs = resp.Messages
 		}
 	}
 
-	// 启动 Bubble Tea TUI
-	p := tea.NewProgram(initialModel(client, sessionID))
+	// 启动 Bubble Tea TUI（历史消息由 initialModel 预填充到 viewport）
+	p := tea.NewProgram(initialModel(client, sessionID, historyMsgs))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 		os.Exit(1)

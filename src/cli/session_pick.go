@@ -6,8 +6,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	"argo/src/knot"
 )
 
 // pickOrCreateSession 展示最近会话列表，让用户选择或新建。
@@ -56,16 +54,4 @@ func pickOrCreateSession(c *argoClient, stdin *bufio.Reader) (string, bool, erro
 	}
 	fmt.Fprintf(os.Stderr, "会话已创建: %s\n", id)
 	return id, false, nil // 新会话
-}
-
-// showMessages 展示对话历史，每条消息截断超过 200 字符的内容。
-func showMessages(msgs []knot.Message) {
-	for _, m := range msgs {
-		role := string(m.Role)
-		content := m.Content
-		if len(content) > 200 {
-			content = content[:200] + "..."
-		}
-		fmt.Fprintf(os.Stderr, "  [%s] %s\n", role, content)
-	}
 }

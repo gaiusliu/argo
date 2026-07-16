@@ -24,3 +24,23 @@ func formatToolDone(ev knot.Event) string {
 		toolDoneStyle.Render("✅"),
 		ev.ToolUse.Name)
 }
+
+// formatHistoryToolStart 格式化历史记录中的工具调用开始行。
+func formatHistoryToolStart(tc knot.ToolCall) string {
+	return fmt.Sprintf("\n%s  Using tool: %s - %s\n",
+		toolStartStyle.Render("🔧"), tc.Name, knot.DisplayParam(tc.Name, tc.Arguments))
+}
+
+// formatHistoryToolDone 格式化历史记录中的工具执行结果。
+// 注意：历史消息不保存 success/error 状态，统一按完成处理。
+func formatHistoryToolDone(name, content string) string {
+	if name == "" {
+		return ""
+	}
+	if content != "" {
+		return fmt.Sprintf("%s %s completed:\n%s\n",
+			toolDoneStyle.Render("✅"), name, content)
+	}
+	return fmt.Sprintf("%s %s completed\n",
+		toolDoneStyle.Render("✅"), name)
+}
