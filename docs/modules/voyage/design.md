@@ -2,96 +2,93 @@
 
 ## 概述
 
-voyage 是 Argo 的会话聚合层。`Session` 结构体聚合 Vault（纯存储）+ brig.Guard（权限门控）+ SessionInfo（元数据），为 `helm.Run` 提供 `Voyage` 接口。负责会话 CRUD（创建/恢复/列表/重命名/删除）和审批记录持久化。
+voyage 是 Argo 的会话聚合层。`Voyage` 结构体聚合 Info（元数据）+ Vault（纯存储）+ Gate（权限门控）+ Tale（对话历史内存态）+ 状态机控制流字段，是 helm 运行时的唯一上下文载体。
 
-voyage 依赖 vault、brig、knot，不依赖 helm/sail/deck。
+voyage 依赖 vault、brig、knot、tale，不依赖 helm/sail/deck。
 
 ## 核心概念
 
 | 概念 | 说明 |
 |------|------|
-| Voyage | 会话能力接口，定义 Load/Append/Evaluate/Approve/UserApprovals/Save/ID/Rename/WorkingDir 9 个方法。`helm.Run` 依赖此接口而非具体 Session |
-| Session | 运行时会话上下文，嵌入 SessionInfo，持有 Vault + Guard，实现 Voyage 接口 |
-| SessionInfo | 会话元数据：ID、ArgoDir、WorkingDir、CreatedAt、LastActiveAt、Name |
-| NewSession | 生成 ID → 建目录 → 写 session.json → 组装 Session（含 Vault + Guard） |
-| ResumeSession | 从 session.json 恢复完整 Session，同时恢复已持久化的审批记录 |
-| ResumeVoyage | 与 ResumeSession 逻辑相同，返回 Voyage 接口（供 server 使用） |
-| SaveApprovals | 将 Guard 中的用户审批快照持久化到 approvals.json，由 helm.checkpoint 调用 |
+| `Voyage` | 会话运行时上下文——嵌入 Info 自动提升元数据字段，持有 Vault + Gate + Tale + 状态机控制流。是具体 struct，非接口 |
+| `Info` | 会话元数据：ID、ArgoDir、WorkingDir、CreatedAt、LastActiveAt、Name |
+| `New` | 创建新会话：生成 ID → Mkdir → 写 session.json → 组装 Voyage（含默认 Vault + Gate）→ 构造空 Tale |
+| `Resume` | 从 session.json 恢复完整 Voyage：读元数据 → 组装 Vault + Gate → 加载消息构造 Tale → 恢复审批记录 |
+| `Option` | 函数选项 `func(*Voyage)`，用于注入 Vault / Gate 依赖。`WithVault` / `WithGate` 覆盖默认实现 |
+| `Tale` | 对话历史内存态——封装消息列表 + 持久化游标 + system prompt。提供 `AppendMessages` / `BuildRequest` / `Unsaved` / `MarkSaved` 等操作 |
+| `AppendMessages` | 将消息差量转为 vault.Record 写入 transcript.jsonl，自动 `MarkSaved` + 更新 `LastActiveAt` |
+| `SaveState` | 将控制流状态（Phase/Model/ToolUses 等）序列化到 state.json。调用前从 Tale 同步 Saved 游标 |
+| `LoadState` | 从 state.json 恢复控制流状态。恢复后将 PendingMessages 回填到 Tale，重建断点前的完整对话历史 |
+| `DeleteState` | 删除 state.json——Asking 阶段终止时使用，下次 Resume 自然回到断点前干净状态 |
+| `SaveApprovals` | 独立函数，将 Gate 中的用户审批快照持久化到 approvals.json |
+| `SaveInfo` | 持久化 session.json（LastActiveAt 等元数据更新） |
 
 ## 会话目录结构
 
 ```
 ~/.argo/sessions/{sessionID}/
-  ├── session.json        ← SessionInfo 元数据（voyage 管理）
+  ├── session.json        ← Info 元数据（voyage 管理）
   ├── transcript.jsonl    ← 对话记录（Vault 管理）
-  ├── approvals.json      ← 用户审批记录（Guard Snapshot/Restore）
-  └── state.json          ← HelmState 控制流（helm 管理）
-```
-
-## Voyage 接口
-
-```go
-type Voyage interface {
-    Save() error
-    Load() ([]knot.Message, error)
-    Rename(name string)
-    ID() string
-    Evaluate(knot.ToolUse) (int, string)
-    WorkingDir() string
-    Append([]vault.Record) error
-    UserApprovals() []brig.ApprovalEntry
-    Approve(tu knot.ToolUse)
-}
-```
-
-`helm.Run` 通过 Voyage 接口与 session 交互，不直接依赖 Session 结构体，方便测试和替换。
-
-## Session 结构
-
-Session 嵌入 SessionInfo，ID/WorkingDir/CreatedAt 等字段自动提升。Vault 绑定 session 目录实现纯存储层隔离，Guard 绑定 WorkingDir 实现审批指纹（`brig.NewFileGuard(workingDir)`）。
-
-```go
-type Session struct {
-    SessionInfo
-    Vault vault.Vault
-    Guard brig.Guard
-}
+  ├── approvals.json      ← 用户审批记录（Gate Snapshot/Restore）
+  └── state.json          ← 控制流状态（helm 断点持久化）
 ```
 
 ## 行为合约
 
-### NewSession / ResumeSession / ResumeVoyage
+### New / Resume — 会话生命周期
 
 | 操作 | 签名 | 行为 |
 |------|------|------|
-| NewSession | `(argoDir, workingDir string) (*Session, error)` | 生成 ID → Mkdir → 写 session.json → 组装 Session |
-| ResumeSession | `(argoDir, id string) (*Session, error)` | 读 session.json → 组装 Session → 读 approvals.json → Guard.Restore |
-| ResumeVoyage | `(id string) (Voyage, error)` | 与 ResumeSession 相同，返回 Voyage 接口（argoDir 从 knot.ArgoDir() 获取） |
+| `New` | `(argoDir, workingDir string, opts ...Option) (*Voyage, error)` | 生成 ID → Mkdir → 写 session.json → 默认 Vault + Gate → 构造空 Tale |
+| `Resume` | `(id string, opts ...Option) (*Voyage, error)` | 读 session.json → 组装 Vault + Gate → Vault.Load 构造 Tale → loadApprovals → Gate.Restore |
 
-### Append
+默认依赖：Vault = `vault.NewFileVault(sessionDir)`，Gate = `brig.NewWarden(workingDir, &brig.BuiltinRuleLoader{})`。通过 `WithVault` / `WithGate` Option 可在测试中注入 mock。
+
+### AppendMessages — 差量持久化
 
 ```
-session.Vault.Append(records)     ← 写 transcript.jsonl
-session.LastActiveAt = time.Now()  ← 更新活跃时间
-saveSessionInfo(...)              ← 写 session.json
+vault.MessagesToRecords(delta, toolUses, model) → Vault.Append(records)
+→ tale.MarkSaved()
+→ LastActiveAt = time.Now()
+→ saveInfo(session.json)
 ```
 
-与旧版差异：不再累加 MessageCount/InputTokens/OutputTokens（SessionInfo 中无这些字段）。
+### SaveState / LoadState — 断点控制流
 
-### SaveApprovals
+**SaveState**（Ask/Done 阶段断点时调用）：
+```
+tale.Saved() → Voyage.Saved（同步游标）
+→ json.MarshalIndent(Voyage) → state.json
+```
 
-- 接收 Voyage 接口，`v.UserApprovals()` 获取审批快照
-- 序列化为 JSON 写入 approvals.json
-- 由 `helm.checkpoint()` 在 Asking / Done 阶段调用，不在 streamAndSave 中
+**LoadState**（Ask 回复路径恢复时调用）：
+```
+state.json → json.Unmarshal → Voyage
+→ tale.SetSaved(Saved)（恢复游标）
+→ tale.AppendMessages(PendingMessages)（回填 Asking 阶段的 user + assistant 消息）
+→ PendingMessages = nil
+```
+
+### 门控委托
+
+`Voyage.Evaluate(tu)` / `Approve(tu)` / `UserApprovals()` 直接委托给内部 Gate，不添加额外逻辑。
+
+### CRUD 操作
+
+| 操作 | 签名 | 行为 |
+|------|------|------|
+| `List` | `(argoDir string) ([]Info, error)` | 遍历 sessions 目录，按 LastActiveAt 倒序，损坏的 session 跳过 |
+| `RenameByID` | `(baseDir, id, name string) error` | 读 session.json → 改 Name → 写回 |
+| `Delete` | `(baseDir, id string) error` | `os.RemoveAll(sessionDir)` |
+| `DeleteState` | `(id string) error` | 删除 state.json（不存在视为正常） |
 
 ### 错误处理
 
-- approvals.json 不存在（新会话）视为正常，不报错
-- session.json 损坏时返回错误
-- Vault 写入失败时返回 error，由上层（helm.checkpoint）slog.Error 记录
+- session.json 损坏 → 返回 error
+- approvals.json 不存在（新会话）→ 视为正常
+- Vault 写入失败 → 返回 error，由上层（helm.checkpoint）slog.Error 记录
+- List 遍历时单个 session 损坏 → slog.Error 记录后跳过，不影响其他
 
-## 关键文件
+### 依赖边界
 
-| 文件 | 职责 |
-|------|------|
-| `voyage.go` | Voyage 接口 + Session 结构体 + SessionInfo + NewSession + ResumeSession + ResumeVoyage + 全部 CRUD 操作 + SaveApprovals + Append |
+voyage 依赖 vault、brig、knot、tale，不依赖 helm/sail/deck。`Voyage` 是具体 struct，不是接口——变化性通过内部 `Vault` / `Gate` 接口注入覆盖。

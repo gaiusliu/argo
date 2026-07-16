@@ -2,74 +2,74 @@
 
 ## 概述
 
-sail 是 Argo 的 LLM 接入层——加载配置、路由 provider、发起流式 API 调用，通过 `<-chan knot.Event` 向 helm 推送统一格式的流式事件。sail 内部用一份 OpenAI Chat Completions SSE 解析实现覆盖 ChatGPT、DeepSeek、Kimi、MiniMax、豆包五个厂家，区别仅在 baseURL。
+sail 是 Argo 的 LLM 接入层。通过 `Provider` 接口向上层暴露统一调用入口，内部封装配置解析、API Key 读取、HTTP 请求、SSE 流解析和错误分类。一份 OpenAI Chat Completions SSE 解析实现覆盖所有兼容供应商，区别仅在 baseURL 和 API Key。
+
+sail 依赖 `knot`，不依赖 helm/deck/brig/voyage。
 
 ## 核心概念
 
 | 概念 | 说明 |
 |------|------|
-| `Chat()` | 流式调用入口：查配置 → 读 API Key → 路由 adapter → 返回事件 channel |
-| `OpenAIChat` / `CompatibleChat` | 两个薄入口函数，分别内置 `api.openai.com` 和用户配置的 baseURL |
-| `doChat` | HTTP POST + 启动 goroutine 解析 SSE，立即返回 channel |
-| `parseSSE` | 逐行解析 SSE 流，`context.AfterFunc` 响应 ctx 取消，零 goroutine 泄漏 |
-| `streamState` | 流式事件状态机，跟踪 text/thinking/tool_use 三块的首个 chunk 以决定 push start 还是 delta |
-| `streamState.handleChunk` | 解析 chunk JSON → 根据当前状态判断 event type → 返回事件列表 |
-| `buildOpenAIBody` | 将 `knot.ChatRequest` 转为 OpenAI JSON 请求体——遍历 `req.Tools`，通过 `ParametersSchema()` 获取参数 JSON Schema，转换为 `openAITool` 数组填入 `Tools` 字段 |
-| `streamState.flush` | 流结束时关闭所有活跃 block：textDone → thinkingDone → 解析累积的 JSON arguments 为扁平 Parameters map → 发出 ToolUseDelta |
-| `APIError` | 结构化错误：Code（auth/quota/rate_limit/server_error/context_overflow/network）、Retryable、RetryAfterSeconds |
-| `classifyError` | HTTP 状态码 + 响应体 + 响应头 → `APIError`。429 内部检查 body 区分 billing 耗尽和频率限制 |
-| `LookupWindow` | knot.metadata.go：精确匹配 + 前缀匹配（版本分隔符边界），从 models.dev 缓存查找 context window |
-| `knot.Event` | 流式事件：textStart/Delta/Done、thinkingStart/Delta/Done、toolUseStart/Delta/Done、done、error |
+| `Provider` | 统一 LLM 调用接口：`Name() / Model() / Chat(ctx, messages, tools) <-chan knot.Event` |
+| `NewProvider` | 工厂函数：model name → 查配置 → 读 env API Key → 返回 `ProviderOpenAI`。model 为空时使用配置默认值 |
+| `ProviderOpenAI` | Provider 的唯一实现。持有 model/provider/apiKey/baseURL/messages/tools/HTTPClient，`Chat()` 方法执行 `buildRequestBody` + `doChat` |
+| `NewProviderOpenAI` | 显式构造器（供 helm compact_llm_summary 等场景使用），不依赖 `knot.GetConfig()` |
+| `doChat` | HTTP POST + 3 次重试 + 429 Retry-After 优先 / 指数退避 1s/2s/4s。200 → `parseSSE` goroutine；非 200 → `classifyError` 判定是否可重试 |
+| `parseSSE` | `bufio.Scanner` 逐行读取 `text/event-stream`。`context.AfterFunc(ctx, body.Close)` 实现安全退出，零 goroutine 泄漏 |
+| `streamState` | 流式事件状态机，跟踪 text/thinking/tool_calls 三块的活跃状态，决定每个 chunk 应推的 EventType |
+| `handleChunk` | 解析 SSE chunk JSON → 按 reasoning → content → tool_calls 顺序判状态 → 返回事件列表 |
+| `flush` | `[DONE]` 或 EOF 时：关闭所有活跃 block（textDone/thinkingDone）→ `json.Unmarshal` 累积的 arguments 为扁平 Parameters → 发出 `EventToolUseDelta` |
+| `buildRequestBody` | 将 `knot.Message` 列表 + `knot.Tool` 列表转为 OpenAI JSON 请求体 |
+| `Window` | 三级查找模型 context window：用户配置 > `models.dev` 缓存 > 保守默认 128000 |
+| `APIError` | 结构化错误：Code / Retryable / RetryAfterSeconds / Message |
+| `classifyError` | HTTP 状态码 + 响应体 + 响应头 → `APIError`，429 内部区分 billing 耗尽和频率限制 |
 
 ## 行为合约
 
-### Chat——流式 LLM 调用入口
+### Chat — 流式 LLM 调用
 
-对外暴露的单入口函数。定位模型所属 provider → 从环境变量读 API Key → 按 provider 类型路由到 `OpenAIChat` 或 `CompatibleChat`。
+- **输入**：`ctx context.Context`、`messages []knot.Message`、`tools []knot.Tool`
+- **输出**：`<-chan knot.Event` 事件流（从不返回 error——配置错误在 `NewProvider` 阶段已处理）
+- **内部流程**：`buildRequestBody()` → `doChat(ctx)` → 返回 event channel
 
-- **输入**：`ctx context.Context`、`modelName string`、`req knot.ChatRequest`
-- **输出**：`<-chan knot.Event` 事件流 + `error`（仅配置/路由阶段失败时非 nil）
-- **路由规则**：`provider == "openai"` → `OpenAIChat`；其他 → `CompatibleChat`（baseURL 取自 `Options["base_url"]`，为空时回退 `https://api.openai.com`）
-- **API Key**：优先读 `ProviderConfig.Env[0]` 对应的环境变量，为空则报错
+### doChat — HTTP 层 + 重试
 
-### doChat——HTTP 层
+- HTTP 头：`Authorization: Bearer {apiKey}` + `Content-Type: application/json`
+- 重试策略：最多 3 次。429 优先用 `Retry-After` 秒数，否则指数退避 1s/2s/4s。网络错误可重试；非可重试错误（auth/quota/context_overflow）直接返回
+- HTTP Client：通过 `ProviderOpenAI.HTTPClient` 注入，nil 时回退 `http.DefaultClient`
+- 超时：由 helm 通过 `context.WithTimeout` 覆盖整个 LLM 调用 + SSE 消费周期
 
-构造 OpenAI Chat Completions 请求体 → POST 到 `{baseURL}/v1/chat/completions` → 非 200 返回单事件 error channel → 200 启动 goroutine 进入 `parseSSE`。
+### parseSSE — SSE 解析 + 安全退出
 
-- **HTTP 头**：`Authorization: Bearer {apiKey}` + `Content-Type: application/json`
-- **超时**：`ChatDefaultTimeout` 导出到包级别，由 helm `runPhaseLLM` 通过 `context.WithTimeout` 覆盖整个 LLM 调用 + SSE 消费周期
-- **非 200**：立即 `close(out)`，返回只含一个 `EventError` 的 channel
+`context.AfterFunc(ctx, body.Close)` 注册回调——ctx 取消时关闭 body 中断阻塞的 scanner。回调在取消发出方 goroutine 同步执行，无需额外 goroutine 等待。`defer stop()` 确保 scanner 先结束时摘除回调，避免双 Close。
 
-### parseSSE——SSE 解析 + 安全退出
-
-`bufio.Scanner` 逐行读取 `text/event-stream` 响应体。`context.AfterFunc(ctx, body.Close)` 注册 ctx 取消回调——ctx 取消时关闭 body 中断阻塞的 scanner，回调在取消发出方 goroutine 同步执行，无需额外 goroutine 等待。`defer stop()` 确保 scanner 先结束时摘除回调，避免双 Close 和泄漏。
-
-scanner.Err 和 ctx.Err 各自独立判断，有错即推 EventError。
-
-### streamState——流式事件状态机
-
-增量解析 OpenAI SSE chunk，根据当前状态决定每个 chunk 应推哪种 EventType：
+### streamState — 状态转换规则
 
 ```
-chunk 到达
-├─ content 非空
-│   ├─ textActive? 否 → EventTextStart，置 textActive=true
-│   └─ textActive? 是 → EventTextDelta
-│   └─ 此前 thinkingActive? → 先推 EventThinkingDone
-│
-├─ reasoning 非空（兼容 reasoning_content / reasoning_text）
-│   ├─ thinkingActive? 否 → EventThinkingStart，置 thinkingActive=true
-│   └─ thinkingActive? 是 → EventThinkingDelta
-│
-├─ tool_calls 非空
-│   ├─ thinkingActive? → 先推 EventThinkingDone
-│   ├─ toolCall[index] 未记录? → EventToolUseStart，记录 index→id
-│   └─ toolCall[index] 已记录? → EventToolUseDelta
-│
-└─ flush（[DONE] 或 EOF）
-    ├─ textActive → EventTextDone
-    ├─ thinkingActive → EventThinkingDone
-    └─ 遍历 toolCalls → json.Unmarshal 累积的 arguments → 构造扁平 Parameters → EventToolUseDelta
+reasoning → text 或 reasoning → tool_calls 时，自动先关 reasoning block（EventThinkingDone）
+
+flush 时（[DONE] / EOF）：
+  textActive → EventTextDone（附带本次 API token usage）
+  thinkingActive → EventThinkingDone
+  toolCalls → json.Unmarshal arguments → EventToolUseDelta（完整 Parameters）
 ```
 
-**状态转换**：reasoning → text 或 reasoning → tool_calls 时，自动先关 reasoning block（EventThinkingDone）。参考 kilocode 的 `transform()` 方法中 `isActiveReasoning` 到 `isActiveText` 的自动切换模式。
+### 错误分类
+
+| HTTP 状态码 | APIError.Code | Retryable |
+|------------|---------------|-----------|
+| 200 | — | — |
+| 401 | auth | false |
+| 402 / 429 (billing) | quota | false |
+| 429 (rate_limit) | rate_limit | true |
+| 400 (context length) | context_overflow | false |
+| 5xx | server_error | true |
+| 网络错误 | network | true |
+
+### NewProvider 路由规则
+
+`api == "openai-completions"` 或空 → `ProviderOpenAI`。baseURL 默认 `https://api.openai.com/v1/chat/completions`，`provider != "openai"` 时从 `Options["base_url"]` 读取自定义地址。
+
+### 依赖边界
+
+sail 只依赖 `knot`（类型、配置、事件定义），不依赖 helm/deck/brig/voyage。`Provider` 接口由 helm 消费。
