@@ -11,7 +11,7 @@ helm 是 Argo 的 Agent 核心循环，基于状态机驱动 "LLM 调用 → 工
 | Phase | 状态机阶段常量（定义在 voyage 包）：`PhaseModel` / `PhaseExecTools` / `PhaseAsking` / `PhaseDone` |
 | Run | 状态机入口：`func Run(ctx, v) <-chan knot.Event`。内部 goroutine 循环执行各 Phase |
 | PhaseRunner | 阶段执行器接口：`Run(ctx, v, emit) bool`，返回 `true`=goroutine 退出 |
-| newRunner | 工厂函数，按 Phase 值返回对应的 PhaseRunner |
+| newRunner | 工厂函数，按 Phase 值返回对应的 PhaseRunner（PhaseModel → NewPhaseRunnerModel，PhaseExecTools/Asking/Done → 对应 struct） |
 | checkpoint | Done 阶段的断点持久化：增量写 vault + 审批记录。Asking 阶段**不调** checkpoint |
 
 ## Phase 流转
@@ -80,8 +80,9 @@ Ask 回复:
 ## 中断机制
 
 - 服务端 `run.go`：每轮循环前 `select { case <-ctx.Done(): return }`
-- 客户端 Ctrl+C → `signal.Notify` → `cancel()` → ctx.Done → goroutine 退出
-- 中断时不调 checkpoint，内存态丢弃，下次 Resume 回到上一断点
+- TUI Esc → `cancelFunc()` 取消 HTTP 请求 ctx → `ctx.Done` → goroutine 退出，同时 `POST /session/interrupt` 清理 state.json
+- TUI Ctrl+C → `tea.Quit` 直接退出 TUI 程序，不调 checkpoint，内存态丢弃
+- 中断时不调 checkpoint，下次 Resume 从 vault 加载回到上一断点
 
 参考 [DEC-039](/docs/decisions.md#dec-039signal-中断ctrlc-截获触发-agent-loop-终止)。
 

@@ -21,7 +21,7 @@ sail 依赖 `knot`，不依赖 helm/deck/brig/voyage。
 | `flush` | `[DONE]` 或 EOF 时：关闭所有活跃 block（textDone/thinkingDone）→ `json.Unmarshal` 累积的 arguments 为扁平 Parameters → 发出 `EventToolUseDelta` |
 | `buildRequestBody` | 将 `knot.Message` 列表 + `knot.Tool` 列表转为 OpenAI JSON 请求体 |
 | `Window` | 三级查找模型 context window：用户配置 > `models.dev` 缓存 > 保守默认 128000 |
-| `APIError` | 结构化错误：Code / Retryable / RetryAfterSeconds / Message |
+| `APIError` | 结构化错误：StatusCode / Code / Retryable / RetryAfterSeconds / Message |
 | `classifyError` | HTTP 状态码 + 响应体 + 响应头 → `APIError`，429 内部区分 billing 耗尽和频率限制 |
 
 ## 行为合约

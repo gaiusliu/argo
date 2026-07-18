@@ -15,7 +15,7 @@ Record 字段详细设计见 [transcript.md](transcript.md)。
 | Vault | 纯存储接口，只有 2 个方法：`Append(records []Record) error` + `Load() ([]knot.Message, error)` |
 | FileVault | Vault 的文件系统实现，绑定到 session 目录，所有操作限定在此目录内 |
 | Record | transcript 中单条记录，user/model/tool 共用同一扁平 struct，JSON tag + omitempty 控制序列化 |
-| RecordType | 三种 record 类型：`RecordUser`（用户输入）、`RecordModel`（模型回复）、`RecordTool`（工具结果） |
+| RecordType | 四种 record 类型：`RecordUser`（用户输入）、`RecordModel`（模型回复）、`RecordTool`（工具结果）、`RecordCompact`（压缩标记持久化） |
 | transcript.jsonl | 对话记录文件，每行一条 Record JSON，FileVault.Append 逐行追加 |
 | MessagesToRecords | 将 `[]knot.Message` 单向转为 `[]Record`，需要 `map[string]knot.ToolUse` 补充工具元数据（verdict/name/status） |
 
@@ -50,7 +50,7 @@ type Vault interface {
 - assistant msg → `Record{Type: RecordModel, Content: ..., Model: modelName, ToolCalls: [...]}`
 - tool msg → `Record{Type: RecordTool, Content: ..., ToolCallID: ..., Name: toolUse.Name, Verdict: toolUse.VerdictResult, Status: "success"/"error"}`
 
-转换需要 `toolUsesByIDs map[string]knot.ToolUse` 作为辅助输入——tool role message 本身不携带工具名和 verdict，需从 HelmState.ToolUses 中按 ToolCallID 查找补充。
+转换需要 `toolUsesByIDs map[string]knot.ToolUse` 作为辅助输入——tool role message 本身不携带工具名和 verdict，需从 HelmState.ToolUses 中按 ToolCallID 查找补充。`Compact` 类型的消息直接写入 `RecordCompact`，记录被压缩的消息区间和 LLM 摘要正文。
 
 ### 并发安全
 

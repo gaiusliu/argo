@@ -81,7 +81,7 @@ ToolResult 返回
 
 - 内置工具在 argo 启动时显式注册
 - 外部 CLI 工具从配置文件加载后逐条注册
-- 注册冲突规则：builtin 优先，外部工具同名报错
+- 注册冲突规则：builtin 优先——同名 CLI 工具静默被 builtin 覆盖；同名 builtin 冲突或 CLI 试图覆盖 builtin 时报错
 - Tool 元数据必须包含：名称（唯一标识）、描述（LLM 可读的自然语言）。CLI 工具的参数由 LLM 通过 `--help` 自行发现（详见 DEC-002）
 
 ### 工具选择

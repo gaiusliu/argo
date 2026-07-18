@@ -27,8 +27,8 @@ knot 是依赖链的起点，不 import 任何 Argo 内部包。模块关系：
 knot  ←  deck  ←  helm  ←  argo-server
   ↑        ↑        ↑        ↑
   ├── sail ┘        ├── brig │
-  ├── reef          ├── voyage┘
-  └── vault ────────┘
+  ├── vault         ├── voyage┘
+  └── ...           └── ...
 ```
 
 ### 类型归属判定

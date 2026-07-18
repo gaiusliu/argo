@@ -18,8 +18,8 @@ brig 是 Argo 的权限审批门控模块。在 helm 执行工具前，brig 按�
 | BuiltinRuleLoader | RuleLoader 的内置实现，加载 denyRules（Iron）+ safeCommands/dangerCommands/interpreterCommands/sensitiveFiles（Cord） |
 | ToolCall | 工具调用指纹 `{ToolName, RawParam, WorkingDir}`——动态审批的精确匹配键 |
 | scopeKey | 审批粒度转换：bash/write/edit 保持精确值，`web_fetch` 将完整 URL 转为域名 |
-| getRawParam | 从 `ToolUse.Parameters` 中按工具名取对应字段值，由 `toolParamKeys` 表驱动 |
 | matchPattern | 6 种通配符匹配（精确/中间/前导/目录/后缀/反向前缀+边界），首个命中即返回 |
+| getRawParam | （定义在 knot）从 `ToolUse.Parameters` 中按工具名取对应字段值，由 `toolParamKeys` 表驱动 |
 | ApprovalEntry | 审批记录持久化结构，`Snapshot()` / `Restore()` 使用 |
 
 ## 行为合约

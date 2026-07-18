@@ -55,8 +55,9 @@ server 不维护任何会话级内存状态：
 
 - 每次 HTTP 请求独立：Vault.Load → Resume Voyage → Run → SSE 转发
 - EventAsk 出现时 goroutine 退出，Voyage.SaveState 存 state.json
-- 客户端通过 Ctrl+C 触发中断（ctx.Done → goroutine 退出）
-- Asking 阶段终止通过 `/interrupt` 端点删 state.json
+- TUI Esc 触发运行中中断：cancel ctx + POST `/interrupt` 删 state.json
+- Ctrl+C 直接退出 TUI 程序（不经过 /interrupt 端点）
+- Asking 阶段通过输入 `stop` 或 `/interrupt` 终止：同样 cancel ctx + 调 `/interrupt` 端点
 
 参考 [DEC-035](/docs/decisions.md#dec-035server-无状态状态机暂停通过磁盘序列化--goroutine-退出) 和 [DEC-039](/docs/decisions.md#dec-039signal-中断ctrlc-截获触发-agent-loop-终止)。
 

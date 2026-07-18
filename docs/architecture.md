@@ -1,6 +1,6 @@
 # Argo 技术架构
 
-## 模块清单（9 模块 + knot + server）
+## 模块清单（8 模块 + knot + server）
 
 | 模块 | 职责 | 状态 |
 |------|------|------|
@@ -22,7 +22,8 @@ CLI ──→ Server ──→ Helm ──→ Voyage ─┬──→ Vault
                 │                   └──→ Brig
                 │
                 ├── Sail
-                └── Deck ──→ Crew
+                ├── Deck ──→ Crew
+                └── Crew  (L1 技能列表)
 
 Server ──→ Crew        (/skill-name 快捷入口)
 
@@ -72,22 +73,30 @@ helm.Run() goroutine 循环：
 
 ## 中断流程
 
-### 运行中中断（Ctrl+C）
+### 运行中中断（Esc）
 
 ```
-CLI: Ctrl+C → signal.Notify → cancel()
+TUI: Esc → cancelFunc()（取消 HTTP 请求 ctx）+ POST /session/interrupt
   → server: ctx.Done → helm.Run goroutine 退出
+  → /interrupt 端点删 state.json（如果存在）
   → 不调 checkpoint，内存态丢弃
   → 下次 Resume 从 vault 加载 → 回到上一断点
 ```
 
-### Asking 阶段终止（/interrupt）
+### Asking 阶段终止（stop / /interrupt）
 
 ```
-CLI: /interrupt 输入 → POST /session/interrupt
+TUI: Ask 提示中输入 "stop" 或 "/interrupt"
+  → cancelFunc() + POST /session/interrupt
   → server: DeleteState(sessionID) → 删 state.json
   → PendingMessages（user + assistant(tool_calls)）随文件丢失
   → 下次 Resume 从 vault 加载 → 回到断点前干净状态
+```
+
+### 退出程序（Ctrl+C）
+
+```
+TUI: Ctrl+C → tea.Quit（直接退出 TUI 程序，服务端 goroutine 随 HTTP 连接断开而退出）
 ```
 
 参考 [DEC-039](/docs/decisions.md#dec-039signal-中断ctrlc-截获触发-agent-loop-终止) 和 [DEC-040](/docs/decisions.md#dec-040asking-延迟持久化phaseasking-不写-vaultpendingmessages-暂存-statejson)。
