@@ -124,6 +124,9 @@ func decodeFileTimestamp(name string) (time.Time, error) {
 }
 
 func init() {
+	// 启动时清理过期截断原文文件
+	cleanupOldFiles(filepath.Join(os.TempDir(), "argo-truncation"))
+
 	RegisterTruncator("head-tail", func(opts map[string]any) (Truncator, error) {
 		return HeadTailTruncator{}, nil
 	})

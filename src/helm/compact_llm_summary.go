@@ -150,3 +150,9 @@ func serializeForCompact(messages []knot.Message) string {
 	}
 	return b.String()
 }
+
+func init() {
+	RegisterCompactor("llm-summary", func(provider sail.Provider, opts map[string]any) (Compactor, error) {
+		return &LLMSummaryCompactor{Provider: provider}, nil
+	})
+}

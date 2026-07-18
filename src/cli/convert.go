@@ -29,8 +29,9 @@ func toKnotEvent(ej server.EventJSON) knot.Event {
 	}
 	if ej.Usage != nil {
 		ev.Usage = knot.TokenUsage{
-			InputTokens:  ej.Usage.Input,
-			OutputTokens: ej.Usage.Output,
+			InputTokens:   ej.Usage.Input,
+			OutputTokens:  ej.Usage.Output,
+			ContextWindow: ej.Usage.Context,
 		}
 	}
 	return ev

@@ -91,7 +91,7 @@ func RegisterTools() error {
 // RegisterTools 先注册内置工具（遇错即停），再注册 CLI 工具（校验/冲突不打断，收尾汇总）
 func (r *ToolRegistry) RegisterTools() error {
 	// 从全局配置解析 Truncator 策略
-	trunc := resolveTruncator()
+	trunc := newTruncator()
 
 	// 内置工具：注入 truncator 后注册
 	for _, bt := range builtinTools {
@@ -132,8 +132,8 @@ func (r *ToolRegistry) RegisterTools() error {
 	return nil
 }
 
-// resolveTruncator 从配置中解析 Truncator，失败时回退 head-tail
-func resolveTruncator() Truncator {
+// newTruncator 从配置中解析 Truncator，失败时回退 head-tail
+func newTruncator() Truncator {
 	cfg, err := knot.GetConfig()
 	if err != nil {
 		slog.Warn("resolve truncator: get config failed, using head-tail", "error", err)

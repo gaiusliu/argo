@@ -30,10 +30,20 @@ func NewPhaseRunnerModel() *PhaseRunnerModel {
 	}
 }
 
-// resolveCompactor 构造 LLM Summary Compactor。
+// newCompactor 从配置中解析 Compactor，失败时回退 llm-summary。
 // provider 为摘要生成所用的模型连接，由 Run() 在 Provider 就绪后传入。
-func resolveCompactor(provider sail.Provider) Compactor {
-	return &LLMSummaryCompactor{Provider: provider}
+func newCompactor(provider sail.Provider) Compactor {
+	cfg, err := knot.GetConfig()
+	if err != nil {
+		slog.Warn("new compactor: get config failed, using llm-summary", "error", err)
+		return &LLMSummaryCompactor{Provider: provider}
+	}
+	c, err := ResolveCompactor(cfg.Context.Compact, provider, cfg.Context.CompactOpts)
+	if err != nil {
+		slog.Warn("new compactor failed, using llm-summary", "error", err)
+		return &LLMSummaryCompactor{Provider: provider}
+	}
+	return c
 }
 
 func (pr *PhaseRunnerModel) Run(ctx context.Context,
@@ -51,7 +61,7 @@ func (pr *PhaseRunnerModel) Run(ctx context.Context,
 	v.Model = pr.Provider.Model()
 
 	// 在 Provider 就绪后解析 Compactor
-	pr.Compactor = resolveCompactor(pr.Provider)
+	pr.Compactor = newCompactor(pr.Provider)
 
 	// Compact 触发时：用已应用历史 compact 的压缩视图作为输入
 	if pr.Compactor.ShouldCompact(v.LastUsage.InputTokens) {
