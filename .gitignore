@@ -15,3 +15,19 @@ settings-backup.json
 
 # vscode
 .vscode/
+
+# test-cases
+test-cases/
+
+# plan-demo 演示项目
+.plan-demos/
+
+# chart 任务拆分输出
+.chart-decompose/
+
+# 开发过程产物（独立 Git 仓库）
+docs/
+
+# 本地工具配置
+.claude/
+CLAUDE.md

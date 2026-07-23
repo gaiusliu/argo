@@ -28,11 +28,10 @@ CLI（HTTP 客户端）──▶ argo-server（HTTP + SSE）──▶ helm（状
 ./argo-cli
 ```
 
-## 文档
+## 特点
 
-| 文档 | 说明 |
-|------|------|
-| [architecture.md](docs/architecture.md) | 模块职责 + 数据流 + 模块间关系 |
-| [decisions.md](docs/decisions.md) | 技术决策（append-only） |
-| [docs/modules/](docs/modules/) | 各模块设计文档 |
-| [docs/iterations/](docs/iterations/) | 迭代开发记录 |
+- **模块可替换**：sail（模型）、deck（工具）、brig（权限）、vault（存储）等模块通过接口协作，任一模块可独立替换
+- **状态机驱动**：helm 以显式状态机编排 ReAct 循环，流程可追踪、可中断、可恢复
+- **流式优先**：SSE 实时推送模型输出，支持中断（Esc）与优雅退出
+- **权限门控**：工具调用经过 brig 权限检查，支持允许/拒绝/始终允许三级策略
+- **最小依赖**：纯 Go 实现，单一二进制部署，无外部服务依赖
