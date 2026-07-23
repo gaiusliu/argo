@@ -28,7 +28,7 @@ func TestMarkCompact(t *testing.T) {
 	tale := New([]knot.Message{
 		makeMsg(knot.MessageRoleUser, "写一个 web server"),
 		makeMsg(knot.MessageRoleAssistant, "好的，我来写"),
-	}, "")
+	})
 
 	// 执行 compact
 	tale.MarkCompact(0, 1, "## Goal\n- 写 web server")
@@ -56,7 +56,7 @@ func TestBuildRequestNoCompact(t *testing.T) {
 		makeMsg(knot.MessageRoleAssistant, "hi"),
 		makeMsg(knot.MessageRoleUser, "帮我查一下"),
 	}
-	tale := New(msgs, "")
+	tale := New(msgs)
 
 	result := tale.BuildRequest("你是助手")
 	if len(result) != 4 {
@@ -86,7 +86,7 @@ func TestBuildRequestSingleCompact(t *testing.T) {
 		makeMsg(knot.MessageRoleAssistant, "A3"),
 		makeMsg(knot.MessageRoleUser, "U4"),
 	}
-	tale := New(msgs, "")
+	tale := New(msgs)
 
 	tale.MarkCompact(2, 6, "## 摘要\n压缩了 U2~U3")
 
@@ -127,7 +127,7 @@ func TestBuildRequestMultipleCompact(t *testing.T) {
 		makeMsg(knot.MessageRoleUser, "U3"),
 		makeMsg(knot.MessageRoleAssistant, "A3"),
 		makeMsg(knot.MessageRoleUser, "U4"),
-	}, "")
+	})
 
 	// 第一次 compact
 	tale.MarkCompact(2, 6, "S1")

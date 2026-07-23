@@ -8,18 +8,16 @@ import "argo/src/knot"
 // 内部持有完整的 Messages 链和持久化游标 saved，
 // Compact 裁剪时同时调整二者，外部无感。
 type Tale struct {
-	messages     []knot.Message
-	systemPrompt string
-	saved        int // 已持久化的消息条数，外部不可见
+	messages []knot.Message
+	saved    int // 已持久化的消息条数，外部不可见
 }
 
 // New 用已有的消息列表构造 Tale。
 // saved 初始等于 len(messages)，表示全部消息已持久化（从 vault 加载的场景）。
-func New(messages []knot.Message, systemPrompt string) *Tale {
+func New(messages []knot.Message) *Tale {
 	return &Tale{
-		messages:     messages,
-		systemPrompt: systemPrompt,
-		saved:        len(messages),
+		messages: messages,
+		saved:    len(messages),
 	}
 }
 
@@ -48,7 +46,7 @@ func (t *Tale) AppendAssistant(content string, toolCalls []knot.ToolCall) {
 // 按时间顺序应用 compact 标记（C1→C2→...），然后前置 system prompt。
 // systemPrompt 为空时返回压缩视图不含 system prompt（供 Compactor 使用）。
 func (t *Tale) BuildRequest(systemPrompt string) []knot.Message {
-	compacted := t.applyCompactView()
+	compacted := t.fold()
 	if systemPrompt == "" {
 		return compacted
 	}
@@ -82,9 +80,9 @@ func (t *Tale) MarkCompact(from, to int, summary string) {
 	})
 }
 
-// applyCompactView 按时间顺序应用 compact 标记，返回压缩后的消息列表。
+// fold 按时间顺序应用 compact 标记，返回压缩后的消息列表。
 // 每个 compact 的 from/to 对应当前中间结果的索引。
-func (t *Tale) applyCompactView() []knot.Message {
+func (t *Tale) fold() []knot.Message {
 	// 收集非 compact 消息作为起点
 	var result []knot.Message
 	for _, m := range t.messages {

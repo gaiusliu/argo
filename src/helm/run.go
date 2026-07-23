@@ -20,14 +20,14 @@ func Run(ctx context.Context, v *voyage.Voyage) <-chan knot.Event {
 			default:
 			}
 
-				pr := newRunner(v.Phase)
-				done := pr.Run(ctx, v, emit)
+			pr := newRunner(v.Phase)
+			done := pr.Run(ctx, v, emit)
 
-				if done {
-					return
-				}
+			if done {
+				return
 			}
-		}()
+		}
+	}()
 
-		return out
-	}
+	return out
+}

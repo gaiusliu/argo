@@ -101,7 +101,7 @@ func New(argoDir, workingDir string, opts ...Option) (*Voyage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("voyage new: load tale: %w", err)
 	}
-	v.tale = tale.New(msgs, "")
+	v.tale = tale.New(msgs)
 	return v, nil
 }
 
@@ -126,7 +126,7 @@ func Resume(id string, opts ...Option) (*Voyage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("voyage resume: load tale: %w", err)
 	}
-	v.tale = tale.New(msgs, "")
+	v.tale = tale.New(msgs)
 
 	// 恢复已持久化的用户审批记录
 	approvals, err := loadApprovals(dir)
