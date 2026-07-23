@@ -26,7 +26,6 @@ test-cases/
 .chart-decompose/
 
 # 开发过程产物（独立 Git 仓库）
-docs/
 
 # 本地工具配置
 .claude/
