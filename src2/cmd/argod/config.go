@@ -7,7 +7,7 @@ import (
 
 // ── 进程级：Server 配置 ──
 
-type serverConfigSource struct{ cl *server.ConfigLoader }
+type serverConfigSource struct{ cl *server.FileConfigLoader }
 
 func (s *serverConfigSource) Load() (pact.ServerCfg, error) {
 	var scfg pact.ServerCfg

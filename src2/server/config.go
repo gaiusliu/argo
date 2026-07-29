@@ -8,23 +8,28 @@ import (
 	"argo/src2/pact"
 )
 
-// ConfigLoader 底层配置文件加载器。
-type ConfigLoader struct {
+// ConfigLoader 配置加载接口，未来可扩展为 DB/Redis 等实现。
+type ConfigLoader interface {
+	Load(name string, target any) error
+}
+
+// FileConfigLoader 从 ~/.argo/ 目录加载 JSON 配置文件。
+type FileConfigLoader struct {
 	dir string
 }
 
-// NewConfigLoader 创建配置加载器，默认从 ~/.argo/ 读取。
-func NewConfigLoader() (*ConfigLoader, error) {
+// NewFileConfigLoader 创建文件配置加载器。
+func NewFileConfigLoader() (*FileConfigLoader, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
-	return &ConfigLoader{dir: filepath.Join(home, ".argo")}, nil
+	return &FileConfigLoader{dir: filepath.Join(home, ".argo")}, nil
 }
 
-// Load 读取 dir/name 文件，解析到 target。文件不存在返回 nil。
-func (c *ConfigLoader) Load(name string, target any) error {
-	data, err := os.ReadFile(filepath.Join(c.dir, name))
+// Load 实现 ConfigLoader。
+func (f *FileConfigLoader) Load(name string, target any) error {
+	data, err := os.ReadFile(filepath.Join(f.dir, name))
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -37,7 +42,7 @@ func (c *ConfigLoader) Load(name string, target any) error {
 // AgentConfigSource 加载 AgentCfg，实现 pact.ConfigSource 接口。
 // 每次请求热重载 agent.json。
 type AgentConfigSource struct {
-	Loader *ConfigLoader
+	Loader ConfigLoader
 }
 
 // Load 实现 pact.ConfigSource。

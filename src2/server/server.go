@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"argo/src2/pact"
+	"argo/src2/sight"
 )
 
 // Server 请求级装配器，每 prompt 创建全新域模块实例。
@@ -23,7 +24,7 @@ func New(scfg pact.ServerCfg, client *http.Client) *Server {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Post("/prompt", func(w http.ResponseWriter, r *http.Request) {
-		cl, err := NewConfigLoader()
+		cl, err := NewFileConfigLoader()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -34,6 +35,12 @@ func New(scfg pact.ServerCfg, client *http.Client) *Server {
 			return
 		}
 		// TODO: 装配 sight/deck/lore/board/voyage → SSE 推送
+		sight, err := sight.New(cfg.Sight, cfg.Sight.DefaultModel, nil, s.client)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = sight
 		_ = cfg
 		http.Error(w, "not implemented", http.StatusNotImplemented)
 	})
