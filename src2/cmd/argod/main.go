@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	fc, err := newFileConfig()
+	fc, err := server.NewConfigLoader()
 	if err != nil {
 		slog.Error("config init failed", "error", err)
 		os.Exit(1)

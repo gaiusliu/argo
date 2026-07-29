@@ -23,6 +23,18 @@ func New(scfg pact.ServerCfg, client *http.Client) *Server {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Post("/prompt", func(w http.ResponseWriter, r *http.Request) {
+		cl, err := NewConfigLoader()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		cfg, err := (&AgentConfigSource{Loader: cl}).Load()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// TODO: 装配 sight/deck/lore/board/voyage → SSE 推送
+		_ = cfg
 		http.Error(w, "not implemented", http.StatusNotImplemented)
 	})
 	s.router = r
