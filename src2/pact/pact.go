@@ -179,23 +179,3 @@ type ClipCfg struct {
 	// Strategy 截断策略名，默认 "head-tail"
 	Strategy string `json:"strategy,omitempty"`
 }
-
-// ServerCfg 进程级配置，启动时加载一次，运行期不变。
-type ServerCfg struct {
-	// Addr 监听地址，如 ":8080"
-	Addr string `json:"addr"`
-	// Log 日志配置
-	Log LogCfg `json:"log"`
-}
-
-// LogCfg 日志配置。
-type LogCfg struct {
-	// Dir 日志目录
-	Dir string `json:"dir,omitempty"`
-	// Level 日志级别：debug / info / warn / error
-	Level string `json:"level,omitempty"`
-	// MaxSize 单文件大小上限（MB）
-	MaxSize int `json:"max_size,omitempty"`
-	// MaxAge 文件保留天数
-	MaxAge int `json:"max_age,omitempty"`
-}
