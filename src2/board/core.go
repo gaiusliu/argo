@@ -2,6 +2,7 @@ package board
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"argo/src2/pact"
@@ -37,9 +38,44 @@ func splitScopeKey(key string) (name, args string, err error) {
 	return name, args, nil
 }
 
-// matchPattern 规则模式匹配。
-// TODO：当前仅支持精确匹配和 * 通配，后续需实现完整模式匹配
-// （精确/中间/前缀/后缀/目录/边界），参考 src/board/board.go:197-244。
+func isBoundary(rest string) bool {
+	return rest == "" || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '/' || rest[0] == '\\'
+}
+
+// matchPattern 规则模式匹配（精确/中间/前导/后缀/目录/边界）。
 func matchPattern(target, pattern string) bool {
-	return target == pattern || pattern == "*"
+	// 1. 精确匹配
+	if target == pattern {
+		return true
+	}
+	// 2. 中间通配 *word*
+	if strings.HasPrefix(pattern, "*") && strings.HasSuffix(pattern, "*") && len(pattern) > 1 {
+		word := pattern[1 : len(pattern)-1]
+		return word != "" && strings.Contains(target, word)
+	}
+	// 3. 前导通配 *.ext
+	if strings.HasPrefix(pattern, "*") && len(pattern) > 1 {
+		return strings.HasSuffix(target, pattern[1:])
+	}
+	// 4. 目录通配 dir/*
+	if strings.HasSuffix(pattern, "/*") && len(pattern) > 2 {
+		return strings.HasPrefix(target, pattern[:len(pattern)-1])
+	}
+	// 5. 后缀通配 prefix*
+	if strings.HasSuffix(pattern, "*") && len(pattern) > 1 {
+		prefix := pattern[:len(pattern)-1]
+		return strings.HasPrefix(target, prefix) ||
+			strings.HasPrefix(filepath.Base(target), prefix)
+	}
+	// 6. 边界检查
+	if strings.HasPrefix(target, pattern) {
+		if isBoundary(target[len(pattern):]) {
+			return true
+		}
+	}
+	base := filepath.Base(target)
+	if strings.HasPrefix(base, pattern) && isBoundary(base[len(pattern):]) {
+		return true
+	}
+	return false
 }
