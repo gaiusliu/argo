@@ -1,4 +1,4 @@
-// Package pact 定义 Argo 各模块间共享的公共数据类型和配置协议。
+// Package pact 定义 Argo 各模块间共享的公共数据类型和协议。
 // 所有新包只 import pact，不互相依赖。
 package pact
 
@@ -63,7 +63,7 @@ type Message struct {
 
 // ── 流式事件 ──
 
-// 流式事件类型常量，Event.Kind 取值。
+// 流式事件类型常量，Event.Type 取值。
 const (
 	// EventTypeStart 流开始
 	EventTypeStart = "start"
@@ -115,76 +115,4 @@ type TokenUsage struct {
 	InputTokens int
 	// OutputTokens 输出 token 数
 	OutputTokens int
-}
-
-// ── 工具描述符 ──
-
-// ── 配置协议 ──
-
-// AgentCfg 请求级配置，每次 handlePrompt 时热重载。
-type AgentCfg struct {
-	Sight SightCfg `json:"sight"`
-	Press PressCfg `json:"press"`
-	Clip  ClipCfg  `json:"clip"`
-	Board BoardCfg `json:"board"`
-}
-
-// SightCfg LLM 调用相关配置。
-type SightCfg struct {
-	// DefaultModel 默认模型名
-	DefaultModel string `json:"default_model,omitempty"`
-	// Providers provider 名 → 配置的映射
-	Providers map[string]ProviderCfg `json:"providers"`
-}
-
-// ProviderCfg 单个 LLM provider 配置。
-type ProviderCfg struct {
-	// Protocol 协议类型，取值见 Protocol* 常量，空字符串默认为 openai-completions
-	Protocol string `json:"protocol,omitempty"`
-	// APIKey API 密钥
-	APIKey string `json:"api_key"`
-	// BaseURL API 基础地址
-	BaseURL string `json:"base_url,omitempty"`
-	// Models 该 provider 支持的模型集合
-	Models map[string]bool `json:"models"`
-}
-
-// Provider 协议类型常量
-const (
-	// ProtocolOpenAI OpenAI Chat Completions 协议
-	ProtocolOpenAI = "openai-completions"
-)
-
-// PressCfg 上下文压缩配置。
-type PressCfg struct {
-	// Strategy 压缩策略名，默认 "llm-summary"
-	Strategy string `json:"strategy,omitempty"`
-	// Threshold 触发压缩的上下文窗口百分比（1-100），默认 80
-	Threshold int `json:"threshold,omitempty"`
-}
-
-// ClipCfg 工具输出截断配置。
-type ClipCfg struct {
-	// Strategy 截断策略名，默认 "head-tail"
-	Strategy string `json:"strategy,omitempty"`
-}
-
-// BoardRule 单条审批规则配置，由 voyage 转为 board.Rule。
-type BoardRule struct {
-	// Hand 工具名
-	Hand string `json:"hand"`
-	// Pattern 参数匹配模式
-	Pattern string `json:"pattern"`
-	// Action 匹配后执行的动作，取值见 board.ActionApprove / ActionAsk / ActionDeny
-	Action int `json:"action"`
-	// Type 规则类型，取值见 board.RuleTypeIron / RuleTypeCord
-	Type int `json:"type"`
-}
-
-// BoardCfg 审批规则配置。
-type BoardCfg struct {
-	// Iron 铁律规则，优先匹配，直接生效
-	Iron []BoardRule `json:"iron"`
-	// Cord 绳索规则，铁律未匹配时生效
-	Cord []BoardRule `json:"cord"`
 }

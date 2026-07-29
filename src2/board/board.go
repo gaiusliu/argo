@@ -23,13 +23,21 @@ const (
 // Rule 单条审批规则，定义工具名+参数模式的匹配条件和匹配后的动作。
 type Rule struct {
 	// Hand 工具名，对应 deck.HandMeta.Name
-	Hand string
+	Hand string `json:"hand"`
 	// Pattern 参数匹配模式
-	Pattern string
+	Pattern string `json:"pattern"`
 	// Action 匹配后执行的动作，取值见 ActionApprove / ActionAsk / ActionDeny
-	Action int
+	Action int `json:"action"`
 	// Type 规则类型，取值见 RuleTypeIron / RuleTypeCord
-	Type int
+	Type int `json:"type"`
+}
+
+// BoardCfg 审批规则配置。
+type BoardCfg struct {
+	// Iron 铁律规则，优先匹配，直接生效
+	Iron []Rule `json:"iron"`
+	// Cord 绳索规则，铁律未匹配时生效
+	Cord []Rule `json:"cord"`
 }
 
 // AyeEntry 船长许可条目，供持久化快照使用。

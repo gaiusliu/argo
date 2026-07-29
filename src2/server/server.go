@@ -34,7 +34,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	var cfg pact.AgentCfg
+	var cfg voyage.AgentCfg
 	if err := cl.Load("agent.json", &cfg); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

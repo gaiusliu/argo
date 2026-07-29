@@ -6,7 +6,8 @@ type Clip interface {
 }
 
 // NewClip 按名称构造 Clip。name 为空时默认 head-tail。
-func NewClip(name string) Clip {
+func NewClip(cfg ClipCfg) Clip {
+	name := cfg.Strategy
 	if name == "" {
 		name = "head-tail"
 	}
@@ -16,4 +17,10 @@ func NewClip(name string) Clip {
 	default:
 		return HeadTailClip{}
 	}
+}
+
+// ClipCfg 工具输出截断配置。
+type ClipCfg struct {
+	// Strategy 截断策略名，默认 "head-tail"
+	Strategy string `json:"strategy,omitempty"`
 }

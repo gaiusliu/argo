@@ -18,7 +18,8 @@ type Press interface {
 }
 
 // New 按策略名构造 Press。name 为空时默认 llm-summary。
-func New(name string, s sight.Sight) (Press, error) {
+func New(cfg PressCfg, s sight.Sight) (Press, error) {
+	name := cfg.Strategy
 	if name == "" {
 		name = "llm-summary"
 	}
@@ -28,4 +29,12 @@ func New(name string, s sight.Sight) (Press, error) {
 	default:
 		return &llmSummary{sight: s}, nil
 	}
+}
+
+// PressCfg 上下文压缩配置。
+type PressCfg struct {
+	// Strategy 压缩策略名，默认 "llm-summary"
+	Strategy string `json:"strategy,omitempty"`
+	// Threshold 触发压缩的上下文窗口百分比（1-100），默认 80
+	Threshold int `json:"threshold,omitempty"`
 }
