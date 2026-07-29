@@ -30,8 +30,10 @@ func (v *Voyage) runSight(out chan<- pact.Event) {
 		if ev.Type == pact.EventTypeToolUseStart {
 			v.omens = append(v.omens, ev.Omens...)
 		}
-		if ev.Type == pact.EventTypeDone {
+		if ev.Type == pact.EventTypeTextDone {
 			v.tokenUsage = ev.Usage
+		}
+		if ev.Type == pact.EventTypeDone {
 			break
 		}
 	}
