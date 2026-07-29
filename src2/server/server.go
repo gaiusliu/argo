@@ -51,8 +51,12 @@ func New(scfg ServerCfg, client *http.Client) *Server {
 		b := board.New(nil, nil, nil) // TODO: 传入规则 + checkpoint
 		// TODO: 传入 journal
 		v := voyage.New(r.Context(), sight, b, nil, d, l)
-		_ = v
-		// TODO: SetSail → SSE
+		for ev := range v.SetSail() {
+			if ev.Kind == pact.KindDone {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+		}
 		http.Error(w, "not implemented", http.StatusNotImplemented)
 	})
 	s.router = r
