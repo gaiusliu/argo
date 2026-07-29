@@ -20,6 +20,7 @@ type Voyage struct {
 	deck    *deck.Deck
 	lore    *lore.Lore
 	omens   []pact.Omen
+	msgs    []pact.Message
 	ctx     context.Context
 }
 
@@ -34,6 +35,11 @@ func New(ctx context.Context, s sight.Sight, b *board.Board, j vault.Journal, d 
 		deck:    d,
 		lore:    l,
 	}
+}
+
+// SetMessages 设置对话历史，供 sight.Take 使用。
+func (v *Voyage) SetMessages(msgs []pact.Message) {
+	v.msgs = msgs
 }
 
 // SetSail 扬帆起航，启动五态自驱动循环，返回流式事件 channel。

@@ -63,42 +63,40 @@ type Message struct {
 
 // ── 流式事件 ──
 
-// EventKind 流式事件类型。
-type EventKind string
-
+// 流式事件类型常量，Event.Kind 取值。
 const (
-	// KindStart 流开始
-	KindStart EventKind = "start"
-	// KindTextStart 文本段开始
-	KindTextStart EventKind = "textStart"
-	// KindTextDelta 文本增量
-	KindTextDelta EventKind = "textDelta"
-	// KindTextDone 文本段结束
-	KindTextDone EventKind = "textDone"
-	// KindThinkingStart 思考段开始
-	KindThinkingStart EventKind = "thinkingStart"
-	// KindThinkingDelta 思考增量
-	KindThinkingDelta EventKind = "thinkingDelta"
-	// KindThinkingDone 思考段结束
-	KindThinkingDone EventKind = "thinkingDone"
-	// KindToolUseStart 工具调用开始
-	KindToolUseStart EventKind = "toolUseStart"
-	// KindToolUseDelta 工具调用增量
-	KindToolUseDelta EventKind = "toolUseDelta"
-	// KindToolUseDone 工具调用结束
-	KindToolUseDone EventKind = "toolUseDone"
-	// KindDone 整个响应结束
-	KindDone EventKind = "done"
-	// KindError 错误
-	KindError EventKind = "error"
-	// KindAsk 需要用户确认
-	KindAsk EventKind = "ask"
+	// EventTypeStart 流开始
+	EventTypeStart = "start"
+	// EventTypeTextStart 文本段开始
+	EventTypeTextStart = "textStart"
+	// EventTypeTextDelta 文本增量
+	EventTypeTextDelta = "textDelta"
+	// EventTypeTextDone 文本段结束
+	EventTypeTextDone = "textDone"
+	// EventTypeThinkingStart 思考段开始
+	EventTypeThinkingStart = "thinkingStart"
+	// EventTypeThinkingDelta 思考增量
+	EventTypeThinkingDelta = "thinkingDelta"
+	// EventTypeThinkingDone 思考段结束
+	EventTypeThinkingDone = "thinkingDone"
+	// EventTypeToolUseStart 工具调用开始
+	EventTypeToolUseStart = "toolUseStart"
+	// EventTypeToolUseDelta 工具调用增量
+	EventTypeToolUseDelta = "toolUseDelta"
+	// EventTypeToolUseDone 工具调用结束
+	EventTypeToolUseDone = "toolUseDone"
+	// EventTypeDone 整个响应结束
+	EventTypeDone = "done"
+	// EventTypeError 错误
+	EventTypeError = "error"
+	// EventTypeAsk 需要用户确认
+	EventTypeAsk = "ask"
 )
 
 // Event 流式事件，sight.Take() 通过 channel 推送。
 type Event struct {
 	// Kind 事件类型
-	Kind EventKind
+	Kind string
 	// Delta textDelta / thinkingDelta 的增量文本
 	Delta string
 	// Omen toolUse* / ask 时携带

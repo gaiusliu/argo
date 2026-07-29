@@ -53,10 +53,10 @@ func (c *llmSummary) Press(ctx context.Context, messages []pact.Message, inputTo
 	// 收集 LLM 返回的摘要文本
 	var buf strings.Builder
 	for ev := range events {
-		if ev.Kind == pact.KindTextDelta {
+		if ev.Kind == pact.EventTypeTextDelta {
 			buf.WriteString(ev.Delta)
 		}
-		if ev.Kind == pact.KindError {
+		if ev.Kind == pact.EventTypeError {
 			return "", 0, 0, ev.Err
 		}
 	}
