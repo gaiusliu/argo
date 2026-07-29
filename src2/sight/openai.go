@@ -92,6 +92,11 @@ func (o *openAI) streamSSE(ctx context.Context, respBody io.Reader, out chan<- p
 	ss := newStreamState()
 	scanner := bufio.NewScanner(respBody)
 	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
 			continue
