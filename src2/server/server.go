@@ -56,7 +56,11 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	l := lore.New("", "")
 	// TODO: 传入规则 + checkpoint + journal
 	b := board.New(nil, nil, nil)
-	p, _ := press.New(cfg.Press.Strategy, sight)
+	p, err := press.New(cfg.Press.Strategy, sight)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	v := voyage.New(r.Context(), sight, b, nil, d, l, p)
 	for ev := range v.SetSail() {
 		if ev.Type == pact.EventTypeDone {
