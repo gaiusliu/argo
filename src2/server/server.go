@@ -11,6 +11,7 @@ import (
 	"argo/src2/deck"
 	"argo/src2/lore"
 	"argo/src2/pact"
+	"argo/src2/press"
 	"argo/src2/sight"
 	"argo/src2/voyage"
 )
@@ -55,7 +56,8 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	l := lore.New("", "")
 	// TODO: 传入规则 + checkpoint + journal
 	b := board.New(nil, nil, nil)
-	v := voyage.New(r.Context(), sight, b, nil, d, l)
+	p, _ := press.New(cfg.Press.Strategy, sight)
+	v := voyage.New(r.Context(), sight, b, nil, d, l, p)
 	for ev := range v.SetSail() {
 		if ev.Type == pact.EventTypeDone {
 			w.WriteHeader(http.StatusOK)

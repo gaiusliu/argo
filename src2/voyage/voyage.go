@@ -7,6 +7,7 @@ import (
 	"argo/src2/deck"
 	"argo/src2/lore"
 	"argo/src2/pact"
+	"argo/src2/press"
 	"argo/src2/sight"
 	"argo/src2/vault"
 )
@@ -20,12 +21,13 @@ type Voyage struct {
 	deck    *deck.Deck
 	lore    *lore.Lore
 	omens   []pact.Omen
+	press   press.Press
 	msgs    []pact.Message
 	ctx     context.Context
 }
 
 // New 装配一次航程。
-func New(ctx context.Context, s sight.Sight, b *board.Board, j vault.Journal, d *deck.Deck, l *lore.Lore) *Voyage {
+func New(ctx context.Context, s sight.Sight, b *board.Board, j vault.Journal, d *deck.Deck, l *lore.Lore, p press.Press) *Voyage {
 	return &Voyage{
 		phase:   PhaseSight,
 		ctx:     ctx,
@@ -34,6 +36,7 @@ func New(ctx context.Context, s sight.Sight, b *board.Board, j vault.Journal, d 
 		journal: j,
 		deck:    d,
 		lore:    l,
+		press:   p,
 	}
 }
 

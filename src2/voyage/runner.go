@@ -1,6 +1,8 @@
 package voyage
 
-import "argo/src2/pact"
+import (
+	"argo/src2/pact"
+)
 
 const codingBehaviorCore = `You are an expert software engineering assistant.
 Complete tasks by reading files, executing commands, editing code, and creating files.
@@ -9,6 +11,7 @@ Be concise. If you don't know something, say so — don't make things up.`
 // TODO：以下 phase runner 均为桩，后续填入真实逻辑
 
 func (v *Voyage) runSight(out chan<- pact.Event) {
+	// TODO: 估算 token 数 → v.press.Full() → v.press.Press()
 	msgs := v.buildSystemPrompt()
 	msgs = append(msgs, v.msgs...)
 	for ev := range v.sight.Take(v.ctx, msgs) {
