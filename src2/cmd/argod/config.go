@@ -14,41 +14,23 @@ type configFile struct {
 	Agent  pact.AgentCfg  `json:"agent"`
 }
 
-// fileConfigSource 从 ~/.argo/config.json 加载配置。
-type fileConfigSource struct {
+// ── 底层文件加载 ──
+
+// fileConfig 从 ~/.argo/config.json 读取原始配置。
+type fileConfig struct {
 	path string
 }
 
-func newFileConfigSource() (*fileConfigSource, error) {
+func newFileConfig() (*fileConfig, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
-	return &fileConfigSource{
-		path: filepath.Join(home, ".argo", "config.json"),
-	}, nil
-}
-
-// Load 实现 pact.ConfigSource，返回 AgentCfg。
-func (f *fileConfigSource) Load() (pact.AgentCfg, error) {
-	cf, err := f.load()
-	if err != nil {
-		return pact.AgentCfg{}, err
-	}
-	return cf.Agent, nil
-}
-
-// LoadServer 返回 ServerCfg。
-func (f *fileConfigSource) LoadServer() (pact.ServerCfg, error) {
-	cf, err := f.load()
-	if err != nil {
-		return pact.ServerCfg{}, err
-	}
-	return cf.Server, nil
+	return &fileConfig{path: filepath.Join(home, ".argo", "config.json")}, nil
 }
 
 // load 读取并解析配置文件，不存在时返回默认值。
-func (f *fileConfigSource) load() (*configFile, error) {
+func (f *fileConfig) load() (*configFile, error) {
 	data, err := os.ReadFile(f.path)
 	if os.IsNotExist(err) {
 		return &configFile{}, nil
@@ -61,4 +43,35 @@ func (f *fileConfigSource) load() (*configFile, error) {
 		return nil, err
 	}
 	return &cf, nil
+}
+
+// ── 进程级：Server 配置 ──
+
+// serverConfigSource 加载进程级 ServerCfg。
+type serverConfigSource struct {
+	fc *fileConfig
+}
+
+func (s *serverConfigSource) Load() (pact.ServerCfg, error) {
+	cf, err := s.fc.load()
+	if err != nil {
+		return pact.ServerCfg{}, err
+	}
+	return cf.Server, nil
+}
+
+// ── 请求级：Agent 配置 ──
+
+// agentConfigSource 实现 pact.ConfigSource，每次请求热重载 AgentCfg。
+type agentConfigSource struct {
+	fc *fileConfig
+}
+
+// Load 实现 pact.ConfigSource。
+func (a *agentConfigSource) Load() (pact.AgentCfg, error) {
+	cf, err := a.fc.load()
+	if err != nil {
+		return pact.AgentCfg{}, err
+	}
+	return cf.Agent, nil
 }

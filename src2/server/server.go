@@ -2,12 +2,11 @@
 package server
 
 import (
+	"argo/src2/pact"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-
-	"argo/src2/pact"
 )
 
 // Server 请求级装配器，每 prompt 创建全新域模块实例。

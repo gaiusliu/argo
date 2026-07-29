@@ -12,14 +12,14 @@ import (
 )
 
 func main() {
-	cs, err := newFileConfigSource()
+	fc, err := newFileConfig()
 	if err != nil {
 		slog.Error("config init failed", "error", err)
 		os.Exit(1)
 	}
 
-	// 从 ConfigSource 加载进程级配置 → 初始化日志
-	scfg, err := cs.LoadServer()
+	// 进程级：Server 配置（启动时加载一次）
+	scfg, err := (&serverConfigSource{fc}).Load()
 	if err != nil {
 		slog.Error("load server config", "error", err)
 		os.Exit(1)
@@ -27,8 +27,11 @@ func main() {
 	logWriter := initLog(scfg)
 	defer logWriter.Close()
 
+	// 请求级：Agent 配置（每次 handlePrompt 热重载）
+	agentCfg := &agentConfigSource{fc}
+
 	client := &http.Client{}
-	srv := server.New(scfg, cs, client)
+	srv := server.New(scfg, agentCfg, client)
 
 	slog.Info("argod starting", "addr", scfg.Addr)
 	if err := srv.ListenAndServe(); err != nil {
