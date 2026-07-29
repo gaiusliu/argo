@@ -19,12 +19,3 @@ type HandMeta struct {
 	// Parameters JSON Schema 参数定义
 	Parameters map[string]any
 }
-
-// Describe 将 Hand 转为 HandMeta。
-func Describe(h Hand) HandMeta {
-	return HandMeta{
-		Name:        h.Name(),
-		Description: h.Description(),
-		Parameters:  h.ParametersSchema(),
-	}
-}

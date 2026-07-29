@@ -36,7 +36,11 @@ func New(ctx context.Context, cfg AgentCfg) (*Voyage, error) {
 	d := deck.New(deck.BuiltinTools(), deck.NewClip(cfg.Clip))
 	hands := make([]deck.HandMeta, 0, len(d.List()))
 	for _, h := range d.List() {
-		hands = append(hands, deck.Describe(h))
+		hands = append(hands, deck.HandMeta{
+			Name:        h.Name(),
+			Description: h.Description(),
+			Parameters:  h.ParametersSchema(),
+		})
 	}
 	s, err := sight.New(cfg.Sight, cfg.Sight.DefaultModel, hands, client)
 	if err != nil {
