@@ -21,7 +21,8 @@ type Voyage struct {
 	deck    *deck.Deck
 	lore    *lore.Lore
 	omens   []pact.Omen
-	press   press.Press
+	press      press.Press
+	tokenUsage pact.TokenUsage
 	msgs    []pact.Message
 	ctx     context.Context
 }

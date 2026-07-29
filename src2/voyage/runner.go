@@ -1,6 +1,9 @@
 package voyage
 
 import (
+	"log/slog"
+
+	"argo/src2/board"
 	"argo/src2/pact"
 )
 
@@ -11,7 +14,15 @@ Be concise. If you don't know something, say so — don't make things up.`
 // TODO：以下 phase runner 均为桩，后续填入真实逻辑
 
 func (v *Voyage) runSight(out chan<- pact.Event) {
-	// TODO: 估算 token 数 → v.press.Full() → v.press.Press()
+	if v.press != nil && v.press.Full(v.tokenUsage.InputTokens) {
+		summary, from, to, err := v.press.Press(v.ctx, v.msgs, v.tokenUsage.InputTokens)
+		if err != nil {
+			slog.Error("press failed", "error", err)
+		} else if summary != "" {
+			v.msgs = append(v.msgs[:from],
+				append([]pact.Message{{Role: pact.RoleCompact, Content: summary}}, v.msgs[to:]...)...)
+		}
+	}
 	msgs := v.buildSystemPrompt()
 	msgs = append(msgs, v.msgs...)
 	for ev := range v.sight.Take(v.ctx, msgs) {
@@ -20,6 +31,7 @@ func (v *Voyage) runSight(out chan<- pact.Event) {
 			v.omens = append(v.omens, ev.Omens...)
 		}
 		if ev.Type == pact.EventTypeDone {
+			v.tokenUsage = ev.Usage
 			break
 		}
 	}
@@ -31,7 +43,13 @@ func (v *Voyage) runSight(out chan<- pact.Event) {
 }
 
 func (v *Voyage) runRead(out chan<- pact.Event) {
-	// 桩：跳过 board.Read() 裁决
+	for _, o := range v.omens {
+		action, _ := v.board.Read(o)
+		if action == board.ActionAsk {
+			v.phase = PhaseCall
+			return
+		}
+	}
 	v.phase = PhaseHeave
 }
 
