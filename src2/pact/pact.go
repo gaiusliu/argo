@@ -140,29 +140,29 @@ type ConfigSource interface {
 
 // AgentCfg 请求级配置，每次 handlePrompt 时通过 ConfigSource.Load() 热重载。
 type AgentCfg struct {
-	Sight SightCfg
-	Press PressCfg
-	Clip  ClipCfg
+	Sight SightCfg `json:"sight"`
+	Press PressCfg `json:"press"`
+	Clip  ClipCfg  `json:"clip"`
 }
 
 // SightCfg LLM 调用相关配置。
 type SightCfg struct {
 	// DefaultModel 默认模型名
-	DefaultModel string
+	DefaultModel string `json:"default_model,omitempty"`
 	// Providers provider 名 → 配置的映射
-	Providers map[string]ProviderCfg
+	Providers map[string]ProviderCfg `json:"providers"`
 }
 
 // ProviderCfg 单个 LLM provider 配置。
 type ProviderCfg struct {
 	// Protocol 协议类型，取值见 Protocol* 常量，空字符串默认为 openai-completions
-	Protocol string
+	Protocol string `json:"protocol,omitempty"`
 	// APIKey API 密钥
-	APIKey string
+	APIKey string `json:"api_key"`
 	// BaseURL API 基础地址
-	BaseURL string
+	BaseURL string `json:"base_url,omitempty"`
 	// Models 该 provider 支持的模型集合
-	Models map[string]bool
+	Models map[string]bool `json:"models"`
 }
 
 // Provider 协议类型常量
@@ -174,33 +174,33 @@ const (
 // PressCfg 上下文压缩配置。
 type PressCfg struct {
 	// Strategy 压缩策略名，默认 "llm-summary"
-	Strategy string
+	Strategy string `json:"strategy,omitempty"`
 	// Threshold 触发压缩的上下文窗口百分比（1-100），默认 80
-	Threshold int
+	Threshold int `json:"threshold,omitempty"`
 }
 
 // ClipCfg 工具输出截断配置。
 type ClipCfg struct {
 	// Strategy 截断策略名，默认 "head-tail"
-	Strategy string
+	Strategy string `json:"strategy,omitempty"`
 }
 
 // ServerCfg 进程级配置，启动时加载一次，运行期不变。
 type ServerCfg struct {
 	// Addr 监听地址，如 ":8080"
-	Addr string
+	Addr string `json:"addr"`
 	// Log 日志配置
-	Log LogCfg
+	Log LogCfg `json:"log"`
 }
 
 // LogCfg 日志配置。
 type LogCfg struct {
 	// Dir 日志目录
-	Dir string
+	Dir string `json:"dir,omitempty"`
 	// Level 日志级别：debug / info / warn / error
-	Level string
+	Level string `json:"level,omitempty"`
 	// MaxSize 单文件大小上限（MB）
-	MaxSize int
+	MaxSize int `json:"max_size,omitempty"`
 	// MaxAge 文件保留天数
-	MaxAge int
+	MaxAge int `json:"max_age,omitempty"`
 }

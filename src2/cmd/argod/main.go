@@ -12,7 +12,11 @@ import (
 )
 
 func main() {
-	cs := &stubConfigSource{} // TODO：替换为 fileConfigSource
+	cs, err := newFileConfigSource()
+	if err != nil {
+		slog.Error("config init failed", "error", err)
+		os.Exit(1)
+	}
 
 	// 从 ConfigSource 加载进程级配置 → 初始化日志
 	scfg, err := cs.LoadServer()
@@ -43,16 +47,4 @@ func initLog(scfg pact.ServerCfg) *logx.LogWriter {
 		Level: slog.LevelInfo,
 	})))
 	return w
-}
-
-// stubConfigSource 桩配置源。
-// TODO：实现从配置文件加载 pact.AgentCfg + pact.ServerCfg
-type stubConfigSource struct{}
-
-func (s *stubConfigSource) Load() (pact.AgentCfg, error) {
-	return pact.AgentCfg{}, nil
-}
-
-func (s *stubConfigSource) LoadServer() (pact.ServerCfg, error) {
-	return pact.ServerCfg{Addr: ":8080"}, nil
 }
