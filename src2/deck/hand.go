@@ -9,3 +9,22 @@ type Hand interface {
 	// Haul 执行工具调用，返回结果字符串。
 	Haul(params map[string]any) (string, error)
 }
+
+// HandMeta 工具元数据，供 LLM function calling 使用。
+type HandMeta struct {
+	// Name 工具名
+	Name string
+	// Description 工具描述
+	Description string
+	// Parameters JSON Schema 参数定义
+	Parameters map[string]any
+}
+
+// Describe 将 Hand 转为 HandMeta。
+func Describe(h Hand) HandMeta {
+	return HandMeta{
+		Name:        h.Name(),
+		Description: h.Description(),
+		Parameters:  h.ParametersSchema(),
+	}
+}

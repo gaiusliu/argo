@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"argo/src2/deck"
 	"argo/src2/pact"
 )
 
@@ -12,11 +13,11 @@ type openAI struct {
 	model   string
 	key     string
 	baseURL string
-	hands   []pact.Hand
+	hands   []deck.HandMeta
 	client  *http.Client
 }
 
-func newOpenAI(model, key, baseURL string, hands []pact.Hand, client *http.Client) *openAI {
+func newOpenAI(model, key, baseURL string, hands []deck.HandMeta, client *http.Client) *openAI {
 	return &openAI{
 		model:   model,
 		key:     key,
@@ -34,7 +35,7 @@ func (o *openAI) Take(ctx context.Context, msgs []pact.Message) <-chan pact.Even
 	return o.doChat(ctx, req)
 }
 
-// buildRequest 将 pact.Message / pact.Hand 转为内部 API 请求结构。
+// buildRequest 将 pact.Message / deck.HandMeta 转为内部 API 请求结构。
 func (o *openAI) buildRequest(msgs []pact.Message) apiReq {
 	req := apiReq{
 		Model:    o.model,

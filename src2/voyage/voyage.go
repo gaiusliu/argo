@@ -33,7 +33,12 @@ type Voyage struct {
 // New 装配一次航程。内部创建各域模块、会话目录、journal和checkpoint。
 func New(ctx context.Context, cfg pact.AgentCfg) (*Voyage, error) {
 	client := &http.Client{}
-	s, err := sight.New(cfg.Sight, cfg.Sight.DefaultModel, nil, client)
+	d := deck.New(deck.BuiltinTools(), deck.NewClip(cfg.Clip.Strategy))
+	hands := make([]deck.HandMeta, 0, len(d.List()))
+	for _, h := range d.List() {
+		hands = append(hands, deck.Describe(h))
+	}
+	s, err := sight.New(cfg.Sight, cfg.Sight.DefaultModel, hands, client)
 	if err != nil {
 		return nil, err
 	}
@@ -41,12 +46,11 @@ func New(ctx context.Context, cfg pact.AgentCfg) (*Voyage, error) {
 	if err != nil {
 		return nil, err
 	}
-	// TODO: 传入 builtin hands + clip
-	d := deck.New(nil, nil)
-	// TODO: 传入用户/项目技能目录
-	l := lore.New("", "")
-	// TODO: 传入规则
-	b := board.New(nil, nil)
+	l := lore.New(argoHome()+"/skills", ".argo/skills")
+	b := board.New(
+		toBoardRules(cfg.Board.Iron),
+		toBoardRules(cfg.Board.Cord),
+	)
 	dir := argoHome()
 	return &Voyage{
 		phase:      PhaseSight,
@@ -59,6 +63,20 @@ func New(ctx context.Context, cfg pact.AgentCfg) (*Voyage, error) {
 		lore:       l,
 		press:      p,
 	}, nil
+}
+
+// toBoardRules 将 pact.BoardRule 列表转为 board.Rule 列表。
+func toBoardRules(rules []pact.BoardRule) []board.Rule {
+	out := make([]board.Rule, len(rules))
+	for i, r := range rules {
+		out[i] = board.Rule{
+			Hand:    r.Hand,
+			Pattern: r.Pattern,
+			Action:  r.Action,
+			Type:    r.Type,
+		}
+	}
+	return out
 }
 
 // SetMessages 设置对话历史，供 sight.Take 使用。

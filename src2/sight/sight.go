@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 
+	"argo/src2/deck"
 	"argo/src2/pact"
 )
 
@@ -17,7 +18,7 @@ type Sight interface {
 }
 
 // New 从配置 + 模型名 + 工具描述符 + 共享 HTTP 客户端构造 Sight。
-func New(cfg pact.SightCfg, model string, hands []pact.Hand, client *http.Client) (Sight, error) {
+func New(cfg pact.SightCfg, model string, hands []deck.HandMeta, client *http.Client) (Sight, error) {
 	for _, pc := range cfg.Providers {
 		if pc.Models[model] {
 			switch pc.Protocol {
