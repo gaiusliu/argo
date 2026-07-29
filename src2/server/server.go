@@ -12,14 +12,15 @@ import (
 
 // Server 请求级装配器，每 prompt 创建全新域模块实例。
 type Server struct {
+	scfg   pact.ServerCfg
 	cs     pact.ConfigSource
 	client *http.Client
 	router *chi.Mux
 }
 
 // New 创建装配器，注册 chi 路由。
-func New(cs pact.ConfigSource, client *http.Client) *Server {
-	s := &Server{cs: cs, client: client}
+func New(scfg pact.ServerCfg, cs pact.ConfigSource, client *http.Client) *Server {
+	s := &Server{scfg: scfg, cs: cs, client: client}
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Post("/prompt", s.handlePrompt)
@@ -28,9 +29,8 @@ func New(cs pact.ConfigSource, client *http.Client) *Server {
 }
 
 // ListenAndServe 启动 HTTP 服务。
-// TODO：从 pact.ServerCfg 读取 Addr
 func (s *Server) ListenAndServe() error {
-	return http.ListenAndServe(":8080", s.router)
+	return http.ListenAndServe(s.scfg.Addr, s.router)
 }
 
 // handlePrompt 处理单次 prompt 请求。

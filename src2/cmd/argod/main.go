@@ -28,7 +28,7 @@ func main() {
 	defer logWriter.Close()
 
 	client := &http.Client{}
-	srv := server.New(cs, client)
+	srv := server.New(scfg, cs, client)
 
 	slog.Info("argod starting", "addr", scfg.Addr)
 	if err := srv.ListenAndServe(); err != nil {
