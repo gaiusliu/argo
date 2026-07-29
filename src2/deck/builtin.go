@@ -3,6 +3,7 @@ package deck
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -88,7 +89,20 @@ func toolSchema(required []string, props map[string]string) map[string]any {
 // BuiltinToolTimeout 工具执行超时。
 const BuiltinToolTimeout = 5 * time.Minute
 
-// resolveShell 跨平台 shell 选择。
+// toInt 将 JSON 数字（float64/int/json.Number）转为 int。
+func toInt(v any, defaultVal int) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case json.Number:
+		i, _ := n.Int64()
+		return int(i)
+	default:
+		return defaultVal
+	}
+}
 func resolveShell() (string, string) {
 	if runtime.GOOS == "windows" {
 		if _, err := exec.LookPath("bash"); err == nil {
@@ -136,14 +150,8 @@ func readHandler(ctx context.Context, params map[string]any) (string, error) {
 		return "", err
 	}
 	defer file.Close()
-	offset := 1
-	if v, ok := params["offset"].(float64); ok && v > 0 {
-		offset = int(v)
-	}
-	limit := 2000
-	if v, ok := params["limit"].(float64); ok && v > 0 {
-		limit = int(v)
-	}
+	offset := toInt(params["offset"], 1)
+	limit := toInt(params["limit"], 2000)
 	scanner := bufio.NewScanner(file)
 	var buf strings.Builder
 	lineNum := 0
@@ -201,10 +209,7 @@ func grepHandler(ctx context.Context, params map[string]any) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	limit := 200
-	if v, ok := params["limit"].(float64); ok && v > 0 {
-		limit = int(v)
-	}
+	limit := toInt(params["limit"], 200)
 	var buf strings.Builder
 	found := 0
 	filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
