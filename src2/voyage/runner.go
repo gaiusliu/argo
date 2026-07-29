@@ -12,8 +12,6 @@ const codingBehaviorCore = `You are an expert software engineering assistant.
 Complete tasks by reading files, executing commands, editing code, and creating files.
 Be concise. If you don't know something, say so — don't make things up.`
 
-// TODO：以下 phase runner 均为桩，后续填入真实逻辑
-
 func (v *Voyage) runSight() {
 	if v.press != nil && v.press.Full(v.tokenUsage.InputTokens) {
 		summary, from, to, err := v.press.Press(v.ctx, v.msgs, v.tokenUsage.InputTokens)
@@ -106,19 +104,30 @@ func (v *Voyage) runCall() {
 		for _, m := range v.msgs {
 			records = append(records, m.Content)
 		}
+		// TODO: 结构化存储journal记录
 		_ = v.journal.Append(records)
 	}
 	// 持久化审批状态
 	_ = v.board.Seal(v.checkpoint)
 	// 持久化断点快照
 	if v.checkpoint != nil {
-		_ = v.checkpoint.Save("") // TODO: 序列化 Voyage 状态
+		// TODO: 架构化存储 Voyage 状态
+		_ = v.checkpoint.Save("")
 	}
 	v.phase = PhaseDock
 }
 
 func (v *Voyage) runDock() {
-	// 桩：跳过 journal.Append() 归档
+	if v.journal != nil {
+		var records []string
+		for _, m := range v.msgs {
+			records = append(records, m.Content)
+		}
+		_ = v.journal.Append(records)
+	}
+	if v.checkpoint != nil {
+		_ = v.checkpoint.Save("") // TODO: 序列化 Voyage 状态
+	}
 	v.out <- pact.Event{Type: pact.EventTypeDone}
 }
 
