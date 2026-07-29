@@ -17,20 +17,16 @@ type Server struct {
 	router *chi.Mux
 }
 
-// New 创建装配器，初始化 chi router 和中间件。
+// New 创建装配器，初始化 chi router 并注册 /prompt 路由。
 func New(scfg pact.ServerCfg, client *http.Client) *Server {
 	s := &Server{scfg: scfg, client: client}
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
-	s.router = r
-	return s
-}
-
-// HandlePrompt 注册 /prompt 路由。agentLoader 在 handler 内每次请求动态加载 AgentCfg。
-func (s *Server) HandlePrompt(agentLoader func() (pact.AgentCfg, error)) {
-	s.router.Post("/prompt", func(w http.ResponseWriter, r *http.Request) {
+	r.Post("/prompt", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not implemented", http.StatusNotImplemented)
 	})
+	s.router = r
+	return s
 }
 
 // ListenAndServe 启动 HTTP 服务。

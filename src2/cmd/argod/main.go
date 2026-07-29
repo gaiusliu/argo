@@ -27,12 +27,8 @@ func main() {
 	logWriter := initLog(scfg)
 	defer logWriter.Close()
 
-	// 请求级：Agent 配置（每次 handlePrompt 热重载）
-	agentCfg := &agentConfigSource{fc}
-
 	client := &http.Client{}
 	srv := server.New(scfg, client)
-	srv.HandlePrompt(agentCfg.Load)
 
 	slog.Info("argod starting", "addr", scfg.Addr)
 	if err := srv.ListenAndServe(); err != nil {
