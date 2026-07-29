@@ -108,10 +108,13 @@ func (v *Voyage) runCall() {
 	if v.journal != nil {
 		var records []string
 		for _, m := range v.msgs {
-			// TODO: 结构化存储journal记录
-			records = append(records, m.Content)
+			data, err := json.Marshal(m)
+			if err != nil {
+				slog.Error("journal marshal", "error", err)
+				continue
+			}
+			records = append(records, string(data))
 		}
-
 		_ = v.journal.Append(records)
 	}
 	// 持久化审批状态
@@ -128,8 +131,12 @@ func (v *Voyage) runDock() {
 	if v.journal != nil {
 		var records []string
 		for _, m := range v.msgs {
-			// TODO：结构化journal记录
-			records = append(records, m.Content)
+			data, err := json.Marshal(m)
+			if err != nil {
+				slog.Error("journal marshal", "error", err)
+				continue
+			}
+			records = append(records, string(data))
 		}
 		_ = v.journal.Append(records)
 	}
