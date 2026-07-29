@@ -165,6 +165,8 @@ func readHandler(ctx context.Context, params map[string]any) (string, error) {
 
 // writeHandler 创建或覆写文件。
 func writeHandler(ctx context.Context, params map[string]any) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, BuiltinToolTimeout)
+	defer cancel()
 	path, _ := params["path"].(string)
 	content, _ := params["content"].(string)
 	if path == "" || content == "" {
@@ -232,6 +234,9 @@ func grepHandler(ctx context.Context, params map[string]any) (string, error) {
 		}
 		return nil
 	})
+	if err != nil {
+		return "", err
+	}
 	return buf.String(), nil
 }
 
@@ -240,7 +245,8 @@ func webFetchHandler(ctx context.Context, params map[string]any) (string, error)
 	ctx, cancel := context.WithTimeout(ctx, BuiltinToolTimeout)
 	defer cancel()
 	url, _ := params["url"].(string)
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+	lower := strings.ToLower(url)
+	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
 		return "", fmt.Errorf("web_fetch: invalid url: %s", url)
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
