@@ -11,15 +11,15 @@ import (
 
 // Server 请求级装配器，每 prompt 创建全新域模块实例。
 type Server struct {
-	scfg   pact.ServerCfg
-	cs     pact.ConfigSource
-	client *http.Client
-	router *chi.Mux
+	scfg        pact.ServerCfg
+	client      *http.Client
+	router      *chi.Mux
+	agentLoader func() (pact.AgentCfg, error)
 }
 
 // New 创建装配器，注册 chi 路由。
-func New(scfg pact.ServerCfg, cs pact.ConfigSource, client *http.Client) *Server {
-	s := &Server{scfg: scfg, cs: cs, client: client}
+func New(scfg pact.ServerCfg, client *http.Client, agentLoader func() (pact.AgentCfg, error)) *Server {
+	s := &Server{scfg: scfg, client: client, agentLoader: agentLoader}
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Post("/prompt", s.handlePrompt)

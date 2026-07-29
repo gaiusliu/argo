@@ -31,7 +31,7 @@ func main() {
 	agentCfg := &agentConfigSource{fc}
 
 	client := &http.Client{}
-	srv := server.New(scfg, agentCfg, client)
+	srv := server.New(scfg, client, agentCfg.Load)
 
 	slog.Info("argod starting", "addr", scfg.Addr)
 	if err := srv.ListenAndServe(); err != nil {
