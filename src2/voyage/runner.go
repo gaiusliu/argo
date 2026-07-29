@@ -105,9 +105,9 @@ func (v *Voyage) runCall() {
 		Omens: v.askOmens,
 	}
 	// 持久化对话记录
-	if v.journal != nil {
+	if v.journal != nil && v.journalIndex < len(v.msgs) {
 		var records []string
-		for _, m := range v.msgs {
+		for _, m := range v.msgs[v.journalIndex:] {
 			data, err := json.Marshal(m)
 			if err != nil {
 				slog.Error("journal marshal", "error", err)
@@ -117,6 +117,8 @@ func (v *Voyage) runCall() {
 		}
 		if err := v.journal.Append(records); err != nil {
 			slog.Error("journal append", "error", err)
+		} else {
+			v.journalIndex = len(v.msgs)
 		}
 	}
 	// 持久化审批状态
@@ -130,9 +132,9 @@ func (v *Voyage) runCall() {
 }
 
 func (v *Voyage) runDock() {
-	if v.journal != nil {
+	if v.journal != nil && v.journalIndex < len(v.msgs) {
 		var records []string
-		for _, m := range v.msgs {
+		for _, m := range v.msgs[v.journalIndex:] {
 			data, err := json.Marshal(m)
 			if err != nil {
 				slog.Error("journal marshal", "error", err)
@@ -142,6 +144,8 @@ func (v *Voyage) runDock() {
 		}
 		if err := v.journal.Append(records); err != nil {
 			slog.Error("journal append", "error", err)
+		} else {
+			v.journalIndex = len(v.msgs)
 		}
 	}
 	if v.checkpoint != nil {
