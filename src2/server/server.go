@@ -2,38 +2,38 @@
 package server
 
 import (
-	"argo/src2/pact"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
+	"argo/src2/pact"
 )
 
 // Server 请求级装配器，每 prompt 创建全新域模块实例。
 type Server struct {
-	scfg        pact.ServerCfg
-	client      *http.Client
-	router      *chi.Mux
-	agentLoader func() (pact.AgentCfg, error)
+	scfg   pact.ServerCfg
+	client *http.Client
+	router *chi.Mux
 }
 
-// New 创建装配器，注册 chi 路由。
-func New(scfg pact.ServerCfg, client *http.Client, agentLoader func() (pact.AgentCfg, error)) *Server {
-	s := &Server{scfg: scfg, client: client, agentLoader: agentLoader}
+// New 创建装配器，初始化 chi router 和中间件。
+func New(scfg pact.ServerCfg, client *http.Client) *Server {
+	s := &Server{scfg: scfg, client: client}
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
-	r.Post("/prompt", s.handlePrompt)
 	s.router = r
 	return s
+}
+
+// HandlePrompt 注册 /prompt 路由。agentLoader 在 handler 内每次请求动态加载 AgentCfg。
+func (s *Server) HandlePrompt(agentLoader func() (pact.AgentCfg, error)) {
+	s.router.Post("/prompt", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not implemented", http.StatusNotImplemented)
+	})
 }
 
 // ListenAndServe 启动 HTTP 服务。
 func (s *Server) ListenAndServe() error {
 	return http.ListenAndServe(s.scfg.Addr, s.router)
-}
-
-// handlePrompt 处理单次 prompt 请求。
-// TODO：实现装配 → voyage.SetSail() → SSE 推送
-func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
 }
