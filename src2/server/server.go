@@ -27,40 +27,41 @@ func New(scfg ServerCfg, client *http.Client) *Server {
 	s := &Server{scfg: scfg, client: client}
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
-	r.Post("/prompt", func(w http.ResponseWriter, r *http.Request) {
-		cl, err := NewFileConfigLoader()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		var cfg pact.AgentCfg
-		if err := cl.Load("agent.json", &cfg); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		// TODO: 装配 sight/deck/lore/board/voyage → SSE 推送
-		sight, err := sight.New(cfg.Sight, cfg.Sight.DefaultModel, nil, s.client)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		_ = sight
-		// 创建 deck、lore、board、voyage
-		d := deck.NewDeck(nil, nil)   // TODO: 传入 builtin hands + clip
-		l := lore.New("", "")         // TODO: 传入用户/项目技能目录
-		b := board.New(nil, nil, nil) // TODO: 传入规则 + checkpoint
-		// TODO: 传入 journal
-		v := voyage.New(r.Context(), sight, b, nil, d, l)
-		for ev := range v.SetSail() {
-			if ev.Kind == pact.KindDone {
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-		}
-		http.Error(w, "not implemented", http.StatusNotImplemented)
-	})
+	r.Post("/prompt", s.handlePrompt)
 	s.router = r
 	return s
+}
+
+// handlePrompt 处理单次 prompt 请求：加载 AgentCfg → 装配 → SetSail → SSE。
+func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
+	cl, err := NewFileConfigLoader()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var cfg pact.AgentCfg
+	if err := cl.Load("agent.json", &cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	sight, err := sight.New(cfg.Sight, cfg.Sight.DefaultModel, nil, s.client)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// TODO: 传入 builtin hands + clip
+	d := deck.NewDeck(nil, nil)
+	// TODO: 传入用户/项目技能目录
+	l := lore.New("", "")
+	// TODO: 传入规则 + checkpoint + journal
+	b := board.New(nil, nil, nil)
+	v := voyage.New(r.Context(), sight, b, nil, d, l)
+	for ev := range v.SetSail() {
+		if ev.Kind == pact.KindDone {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+	}
 }
 
 // ListenAndServe 启动 HTTP 服务。
