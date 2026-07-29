@@ -8,17 +8,9 @@ import (
 	"argo/src2/pact"
 )
 
-// configFile 配置文件顶层结构。
-type configFile struct {
-	Server pact.ServerCfg `json:"server"`
-	Agent  pact.AgentCfg  `json:"agent"`
-}
-
-// ── 底层文件加载 ──
-
-// fileConfig 从 ~/.argo/config.json 读取原始配置。
+// fileConfig 底层文件加载，load 为通用方法，解析结果写入 target。
 type fileConfig struct {
-	path string
+	dir string
 }
 
 func newFileConfig() (*fileConfig, error) {
@@ -26,52 +18,42 @@ func newFileConfig() (*fileConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &fileConfig{path: filepath.Join(home, ".argo", "config.json")}, nil
+	return &fileConfig{dir: filepath.Join(home, ".argo")}, nil
 }
 
-// load 读取并解析配置文件，不存在时返回默认值。
-func (f *fileConfig) load() (*configFile, error) {
-	data, err := os.ReadFile(f.path)
+// load 读取 dir/name 文件并解析到 target。文件不存在返回 nil。
+func (f *fileConfig) load(name string, target any) error {
+	data, err := os.ReadFile(filepath.Join(f.dir, name))
 	if os.IsNotExist(err) {
-		return &configFile{}, nil
+		return nil
 	}
 	if err != nil {
-		return nil, err
+		return err
 	}
-	var cf configFile
-	if err := json.Unmarshal(data, &cf); err != nil {
-		return nil, err
-	}
-	return &cf, nil
+	return json.Unmarshal(data, target)
 }
 
 // ── 进程级：Server 配置 ──
 
-// serverConfigSource 加载进程级 ServerCfg。
-type serverConfigSource struct {
-	fc *fileConfig
-}
+type serverConfigSource struct{ fc *fileConfig }
 
 func (s *serverConfigSource) Load() (pact.ServerCfg, error) {
-	cf, err := s.fc.load()
-	if err != nil {
+	var scfg pact.ServerCfg
+	if err := s.fc.load("server.json", &scfg); err != nil {
 		return pact.ServerCfg{}, err
 	}
-	return cf.Server, nil
+	return scfg, nil
 }
 
 // ── 请求级：Agent 配置 ──
 
-// agentConfigSource 实现 pact.ConfigSource，每次请求热重载 AgentCfg。
-type agentConfigSource struct {
-	fc *fileConfig
-}
+type agentConfigSource struct{ fc *fileConfig }
 
-// Load 实现 pact.ConfigSource。
+// Load 实现 pact.ConfigSource，每次请求热重载 agent.json。
 func (a *agentConfigSource) Load() (pact.AgentCfg, error) {
-	cf, err := a.fc.load()
-	if err != nil {
+	var acfg pact.AgentCfg
+	if err := a.fc.load("agent.json", &acfg); err != nil {
 		return pact.AgentCfg{}, err
 	}
-	return cf.Agent, nil
+	return acfg, nil
 }
