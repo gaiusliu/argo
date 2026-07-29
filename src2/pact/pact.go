@@ -59,6 +59,10 @@ type Message struct {
 	OmenID string
 	// Omens role=assistant 时记录本轮发起的工具调用
 	Omens []Omen
+	// Model role=assistant 时记录使用的模型名
+	Model string
+	// Timestamp 消息时间戳（ISO 8601）
+	Timestamp string
 }
 
 // ── 流式事件 ──
