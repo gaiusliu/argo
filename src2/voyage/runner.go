@@ -1,6 +1,7 @@
 package voyage
 
 import (
+	"encoding/json"
 	"log/slog"
 
 	"argo/src2/board"
@@ -56,8 +57,31 @@ func (v *Voyage) runRead(out chan<- pact.Event) {
 }
 
 func (v *Voyage) runHeave(out chan<- pact.Event) {
-	// 桩：跳过 deck.Haul() 执行
-	v.phase = PhaseDock
+	for i := range v.omens {
+		o := &v.omens[i]
+		hand, ok := v.deck.Lookup(o.Name)
+		if !ok {
+			o.Status = pact.StatusError
+			o.Result = "tool not found: " + o.Name
+			continue
+		}
+		var params map[string]any
+		if err := json.Unmarshal([]byte(o.Arguments), &params); err != nil {
+			o.Status = pact.StatusError
+			o.Result = err.Error()
+			continue
+		}
+		result, err := hand.Haul(params)
+		if err != nil {
+			o.Status = pact.StatusError
+			o.Result = err.Error()
+		} else {
+			o.Status = pact.StatusSuccess
+			o.Result = result
+		}
+	}
+	v.omens = nil
+	v.phase = PhaseSight
 }
 
 func (v *Voyage) runDock(out chan<- pact.Event) {

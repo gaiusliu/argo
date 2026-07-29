@@ -14,14 +14,14 @@ const (
 type HeadTailClip struct{}
 
 // Clip 对超长输出做首尾截断，原文暂存临时文件。
-func (HeadTailClip) Clip(result Catch) Catch {
-	if len(result.Output) <= maxOutputLen {
+func (HeadTailClip) Clip(result string) string {
+	if len(result) <= maxOutputLen {
 		return result
 	}
 	half := keepLen / 2
-	path := storeOriginal(result.Output)
+	path := storeOriginal(result)
 	marker := fmt.Sprintf("\n"+truncationMarker+"\n", path)
-	result.Output = result.Output[:half] + marker + result.Output[len(result.Output)-half:]
+	result = result[:half] + marker + result[len(result)-half:]
 	return result
 }
 

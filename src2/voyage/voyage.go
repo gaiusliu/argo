@@ -14,17 +14,17 @@ import (
 
 // Voyage 一次航程，持有所有域模块实例，自驱动执行五态循环。
 type Voyage struct {
-	phase   int
-	sight   sight.Sight
-	board   *board.Board
-	journal vault.Journal
-	deck    *deck.Deck
-	lore    *lore.Lore
-	omens   []pact.Omen
+	phase      int
+	sight      sight.Sight
+	board      *board.Board
+	journal    vault.Journal
+	deck       *deck.Deck
+	lore       *lore.Lore
+	omens      []pact.Omen
 	press      press.Press
 	tokenUsage pact.TokenUsage
-	msgs    []pact.Message
-	ctx     context.Context
+	msgs       []pact.Message
+	ctx        context.Context
 }
 
 // New 装配一次航程。

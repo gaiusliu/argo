@@ -28,8 +28,8 @@ func (b *builtinTool) Source() string                   { return "builtin" }
 
 // Haul 为桩实现，后续从 src/deck/ 搬运真实 handler 逻辑。
 // TODO：从 src/deck/ 搬运真实工具执行器。
-func (b *builtinTool) Haul(_ map[string]any) (Catch, error) {
-	return Catch{Output: "stub: " + b.name + " executed"}, nil
+func (b *builtinTool) Haul(_ map[string]any) (string, error) {
+	return "stub: " + b.name + " executed", nil
 }
 
 // ── JSON Schema 辅助 ──

@@ -6,7 +6,7 @@ type truncatedTool struct {
 	clip Clip
 }
 
-func (t *truncatedTool) Haul(params map[string]any) (Catch, error) {
+func (t *truncatedTool) Haul(params map[string]any) (string, error) {
 	result, err := t.Hand.Haul(params)
 	if err != nil {
 		return result, err
