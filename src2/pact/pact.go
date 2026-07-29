@@ -101,9 +101,9 @@ type Event struct {
 	Delta string
 	// Omens toolUse* / ask 时携带的工具调用
 	Omens []Omen
-	// Usage KindDone 时携带的 token 消耗统计
+	// Usage EventTypeDone 时携带的 token 消耗统计
 	Usage TokenUsage
-	// Err KindError 时携带的错误
+	// Err EventTypeError 时携带的错误
 	Err error
 }
 
