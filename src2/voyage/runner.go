@@ -117,9 +117,11 @@ func (v *Voyage) runCall() {
 		}
 		if err := v.journal.Append(records); err != nil {
 			slog.Error("journal append", "error", err)
-		} else {
-			v.journalIndex = len(v.msgs)
+			v.out <- pact.Event{Type: pact.EventTypeError, Err: err}
+			v.phase = PhaseDock
+			return
 		}
+		v.journalIndex = len(v.msgs)
 	}
 	// 持久化审批状态
 	_ = v.board.Seal(v.checkpoint)
