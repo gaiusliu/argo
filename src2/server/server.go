@@ -57,7 +57,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	b := board.New(nil, nil, nil)
 	v := voyage.New(r.Context(), sight, b, nil, d, l)
 	for ev := range v.SetSail() {
-		if ev.Kind == pact.EventTypeDone {
+		if ev.Type == pact.EventTypeDone {
 			w.WriteHeader(http.StatusOK)
 			return
 		}

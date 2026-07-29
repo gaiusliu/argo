@@ -13,10 +13,10 @@ func (v *Voyage) runSight(out chan<- pact.Event) {
 	msgs = append(msgs, v.msgs...)
 	for ev := range v.sight.Take(v.ctx, msgs) {
 		out <- ev
-		if ev.Kind == pact.EventTypeToolUseStart {
+		if ev.Type == pact.EventTypeToolUseStart {
 			v.omens = append(v.omens, ev.Omen)
 		}
-		if ev.Kind == pact.EventTypeDone {
+		if ev.Type == pact.EventTypeDone {
 			break
 		}
 	}
@@ -39,7 +39,7 @@ func (v *Voyage) runHeave(out chan<- pact.Event) {
 
 func (v *Voyage) runDock(out chan<- pact.Event) {
 	// 桩：跳过 journal.Append() 归档
-	out <- pact.Event{Kind: pact.EventTypeDone}
+	out <- pact.Event{Type: pact.EventTypeDone}
 }
 
 // buildSystemPrompt 组装 system prompt，包含角色设定、工具列表和技能列表。

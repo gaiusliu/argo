@@ -96,7 +96,8 @@ const (
 // Event 流式事件，sight.Take() 通过 channel 推送。
 type Event struct {
 	// Kind 事件类型
-	Kind string
+	// Type 事件类型，取值见 EventTypeStart / EventTypeTextStart / EventTypeTextDelta / EventTypeTextDone / EventTypeThinkingStart / EventTypeThinkingDelta / EventTypeThinkingDone / EventTypeToolUseStart / EventTypeToolUseDelta / EventTypeToolUseDone / EventTypeDone / EventTypeError / EventTypeAsk 常量
+	Type string
 	// Delta textDelta / thinkingDelta 的增量文本
 	Delta string
 	// Omen toolUse* / ask 时携带

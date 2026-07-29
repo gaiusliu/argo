@@ -68,11 +68,11 @@ func (o *openAI) doChat(ctx context.Context, req apiReq) <-chan pact.Event {
 		for {
 			select {
 			case <-ctx.Done():
-				out <- pact.Event{Kind: pact.EventTypeError, Err: ctx.Err()}
+				out <- pact.Event{Type: pact.EventTypeError, Err: ctx.Err()}
 				return
 			default:
-				out <- pact.Event{Kind: pact.EventTypeTextDelta, Delta: "（stub：sight.openAI.doChat 待实现）"}
-				out <- pact.Event{Kind: pact.EventTypeDone}
+				out <- pact.Event{Type: pact.EventTypeTextDelta, Delta: "（stub：sight.openAI.doChat 待实现）"}
+				out <- pact.Event{Type: pact.EventTypeDone}
 				return
 			}
 		}
