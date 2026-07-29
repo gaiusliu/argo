@@ -22,7 +22,7 @@ const (
 
 // Rule 单条审批规则，定义工具名+参数模式的匹配条件和匹配后的动作。
 type Rule struct {
-	// Hand 工具名，对应 pact.Hand.Name
+	// Hand 工具名，对应 deck.HandMeta.Name
 	Hand string
 	// Pattern 参数匹配模式
 	Pattern string

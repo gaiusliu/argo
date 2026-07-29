@@ -6,8 +6,8 @@ type Deck struct {
 	clip  Clip
 }
 
-// NewDeck 构造 Deck，builtin 工具自动包裹 Clip 后处理。
-func NewDeck(builtin []Hand, clip Clip) *Deck {
+// New 构造 Deck，builtin 工具自动包裹 Clip 后处理。
+func New(builtin []Hand, clip Clip) *Deck {
 	d := &Deck{hands: make(map[string]Hand), clip: clip}
 	for _, t := range builtin {
 		d.hands[t.Name()] = &truncatedTool{Hand: t, clip: d.clip}

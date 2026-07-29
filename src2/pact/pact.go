@@ -119,16 +119,6 @@ type TokenUsage struct {
 
 // ── 工具描述符 ──
 
-// Hand 工具元数据，供 LLM function calling 使用。由 deck 包提供，sight 包消费。
-type Hand struct {
-	// Name 工具名
-	Name string
-	// Description 工具描述
-	Description string
-	// Parameters JSON Schema 参数定义
-	Parameters map[string]any
-}
-
 // ── 配置协议 ──
 
 // AgentCfg 请求级配置，每次 handlePrompt 时热重载。
@@ -136,6 +126,7 @@ type AgentCfg struct {
 	Sight SightCfg `json:"sight"`
 	Press PressCfg `json:"press"`
 	Clip  ClipCfg  `json:"clip"`
+	Board BoardCfg `json:"board"`
 }
 
 // SightCfg LLM 调用相关配置。
@@ -176,4 +167,24 @@ type PressCfg struct {
 type ClipCfg struct {
 	// Strategy 截断策略名，默认 "head-tail"
 	Strategy string `json:"strategy,omitempty"`
+}
+
+// BoardRule 单条审批规则配置，由 voyage 转为 board.Rule。
+type BoardRule struct {
+	// Hand 工具名
+	Hand string `json:"hand"`
+	// Pattern 参数匹配模式
+	Pattern string `json:"pattern"`
+	// Action 匹配后执行的动作，取值见 board.ActionApprove / ActionAsk / ActionDeny
+	Action int `json:"action"`
+	// Type 规则类型，取值见 board.RuleTypeIron / RuleTypeCord
+	Type int `json:"type"`
+}
+
+// BoardCfg 审批规则配置。
+type BoardCfg struct {
+	// Iron 铁律规则，优先匹配，直接生效
+	Iron []BoardRule `json:"iron"`
+	// Cord 绳索规则，铁律未匹配时生效
+	Cord []BoardRule `json:"cord"`
 }
