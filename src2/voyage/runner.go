@@ -14,7 +14,7 @@ func (v *Voyage) runSight(out chan<- pact.Event) {
 	for ev := range v.sight.Take(v.ctx, msgs) {
 		out <- ev
 		if ev.Type == pact.EventTypeToolUseStart {
-			v.omens = append(v.omens, ev.Omen)
+			v.omens = append(v.omens, ev.Omens...)
 		}
 		if ev.Type == pact.EventTypeDone {
 			break
