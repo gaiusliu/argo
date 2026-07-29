@@ -7,10 +7,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"argo/src2/board"
 	"argo/src2/deck"
 	"argo/src2/lore"
 	"argo/src2/pact"
 	"argo/src2/sight"
+	"argo/src2/voyage"
 )
 
 // Server 请求级装配器，每 prompt 创建全新域模块实例。
@@ -43,12 +45,14 @@ func New(scfg ServerCfg, client *http.Client) *Server {
 			return
 		}
 		_ = sight
-		// 创建 deck、lore
-		d := deck.NewDeck(nil, nil) // TODO: 传入 builtin hands + clip
-		l := lore.New("", "")       // TODO: 传入用户/项目技能目录
-		_ = d
-		_ = l
-		// TODO: 创建 board、journal、voyage → SetSail → SSE
+		// 创建 deck、lore、board、voyage
+		d := deck.NewDeck(nil, nil)   // TODO: 传入 builtin hands + clip
+		l := lore.New("", "")         // TODO: 传入用户/项目技能目录
+		b := board.New(nil, nil, nil) // TODO: 传入规则 + checkpoint
+		// TODO: 传入 journal
+		v := voyage.New(r.Context(), sight, b, nil, d, l)
+		_ = v
+		// TODO: SetSail → SSE
 		http.Error(w, "not implemented", http.StatusNotImplemented)
 	})
 	s.router = r
