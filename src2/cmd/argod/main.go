@@ -11,8 +11,6 @@ import (
 	"argo/src2/server"
 )
 
-var logWriter *logx.LogWriter
-
 func main() {
 	cs := &stubConfigSource{} // TODO：替换为 fileConfigSource
 
@@ -22,8 +20,8 @@ func main() {
 		slog.Error("load server config", "error", err)
 		os.Exit(1)
 	}
-	initLog(scfg)
-	defer func() { _ = logWriter.Close() }()
+	logWriter := initLog(scfg)
+	defer logWriter.Close()
 
 	client := &http.Client{}
 	srv := server.New(cs, client)
@@ -35,16 +33,16 @@ func main() {
 	}
 }
 
-func initLog(scfg pact.ServerCfg) {
+func initLog(scfg pact.ServerCfg) *logx.LogWriter {
 	w, err := logx.New(scfg.Log)
 	if err != nil {
 		slog.Error("log init failed", "error", err)
 		os.Exit(1)
 	}
-	logWriter = w
 	slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})))
+	return w
 }
 
 // stubConfigSource 桩配置源。
