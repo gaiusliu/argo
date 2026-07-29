@@ -28,6 +28,7 @@ type Voyage struct {
 	tokenUsage pact.TokenUsage
 	msgs       []pact.Message
 	ctx        context.Context
+	out        chan<- pact.Event
 }
 
 // New 装配一次航程。内部创建各域模块、会话目录、journal和checkpoint。
@@ -74,20 +75,21 @@ func (v *Voyage) SetMessages(msgs []pact.Message) {
 // SetSail 扬帆起航，启动五态自驱动循环，返回流式事件 channel。
 func (v *Voyage) SetSail() <-chan pact.Event {
 	out := make(chan pact.Event, 8)
+	v.out = out
 	go func() {
 		defer close(out)
 		for {
 			switch v.phase {
 			case PhaseSight:
-				v.runSight(out)
+				v.runSight()
 			case PhaseRead:
-				v.runRead(out)
+				v.runRead()
 			case PhaseCall:
-				v.runCall(out)
+				v.runCall()
 			case PhaseHeave:
-				v.runHeave(out)
+				v.runHeave()
 			case PhaseDock:
-				v.runDock(out)
+				v.runDock()
 				return
 			}
 		}

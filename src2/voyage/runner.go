@@ -14,7 +14,7 @@ Be concise. If you don't know something, say so — don't make things up.`
 
 // TODO：以下 phase runner 均为桩，后续填入真实逻辑
 
-func (v *Voyage) runSight(out chan<- pact.Event) {
+func (v *Voyage) runSight() {
 	if v.press != nil && v.press.Full(v.tokenUsage.InputTokens) {
 		summary, from, to, err := v.press.Press(v.ctx, v.msgs, v.tokenUsage.InputTokens)
 		if err != nil {
@@ -27,7 +27,7 @@ func (v *Voyage) runSight(out chan<- pact.Event) {
 	msgs := v.buildSystemPrompt()
 	msgs = append(msgs, v.msgs...)
 	for ev := range v.sight.Take(v.ctx, msgs) {
-		out <- ev
+		v.out <- ev
 		if ev.Type == pact.EventTypeToolUseStart {
 			v.omens = append(v.omens, ev.Omens...)
 		}
@@ -45,7 +45,7 @@ func (v *Voyage) runSight(out chan<- pact.Event) {
 	}
 }
 
-func (v *Voyage) runRead(out chan<- pact.Event) {
+func (v *Voyage) runRead() {
 	v.askOmens = nil
 	hasPass := false
 	for i := range v.omens {
@@ -68,7 +68,7 @@ func (v *Voyage) runRead(out chan<- pact.Event) {
 	}
 }
 
-func (v *Voyage) runHeave(out chan<- pact.Event) {
+func (v *Voyage) runHeave() {
 	for i := range v.omens {
 		o := &v.omens[i]
 		hand, ok := v.deck.Lookup(o.Name)
@@ -95,8 +95,8 @@ func (v *Voyage) runHeave(out chan<- pact.Event) {
 	v.phase = PhaseSight
 }
 
-func (v *Voyage) runCall(out chan<- pact.Event) {
-	out <- pact.Event{
+func (v *Voyage) runCall() {
+	v.out <- pact.Event{
 		Type:  pact.EventTypeAsk,
 		Omens: v.askOmens,
 	}
@@ -117,9 +117,9 @@ func (v *Voyage) runCall(out chan<- pact.Event) {
 	v.phase = PhaseDock
 }
 
-func (v *Voyage) runDock(out chan<- pact.Event) {
+func (v *Voyage) runDock() {
 	// 桩：跳过 journal.Append() 归档
-	out <- pact.Event{Type: pact.EventTypeDone}
+	v.out <- pact.Event{Type: pact.EventTypeDone}
 }
 
 // buildSystemPrompt 组装 system prompt，包含角色设定、工具列表和技能列表。
