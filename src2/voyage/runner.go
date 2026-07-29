@@ -2,7 +2,13 @@ package voyage
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"os"
+	"runtime"
+	"sort"
+	"strings"
+	"time"
 
 	"argo/src2/board"
 	"argo/src2/pact"
@@ -102,9 +108,10 @@ func (v *Voyage) runCall() {
 	if v.journal != nil {
 		var records []string
 		for _, m := range v.msgs {
+			// TODO: 结构化存储journal记录
 			records = append(records, m.Content)
 		}
-		// TODO: 结构化存储journal记录
+
 		_ = v.journal.Append(records)
 	}
 	// 持久化审批状态
@@ -121,21 +128,53 @@ func (v *Voyage) runDock() {
 	if v.journal != nil {
 		var records []string
 		for _, m := range v.msgs {
+			// TODO：结构化journal记录
 			records = append(records, m.Content)
 		}
 		_ = v.journal.Append(records)
 	}
 	if v.checkpoint != nil {
-		_ = v.checkpoint.Save("") // TODO: 序列化 Voyage 状态
+		// TODO: 序列化 Voyage 状态
+		_ = v.checkpoint.Save("")
 	}
 	v.out <- pact.Event{Type: pact.EventTypeDone}
 }
 
-// buildSystemPrompt 组装 system prompt，包含角色设定、工具列表和技能列表。
+// buildSystemPrompt 组装 system prompt，包含角色设定、环境信息、技能列表、工具列表。
 func (v *Voyage) buildSystemPrompt() []pact.Message {
-	// TODO: 补充环境信息、可用技能列表、工具列表、AGENTS.md
+	var sb strings.Builder
+	sb.WriteString(codingBehaviorCore)
+	sb.WriteString("\n\n")
+	sb.WriteString("<env>\n")
+	fmt.Fprintf(&sb, "  Platform: %s\n", runtime.GOOS)
+	fmt.Fprintf(&sb, "  Today's date: %s\n", time.Now().Format("2006-01-02"))
+	sb.WriteString("</env>\n\n")
+	// 技能列表
+	if skills := v.lore.List(); len(skills) > 0 {
+		sb.WriteString("## Available Skills\n")
+		for _, s := range skills {
+			fmt.Fprintf(&sb, "- %s: %s\n", s.Name, s.Description)
+		}
+		sb.WriteString("\n")
+	}
+	// 工具列表
+	if tools := v.deck.List(); len(tools) > 0 {
+		sort.Slice(tools, func(i, j int) bool {
+			return tools[i].Name() < tools[j].Name()
+		})
+		sb.WriteString("## Available Tools\n")
+		for _, t := range tools {
+			fmt.Fprintf(&sb, "- %s: %s\n", t.Name(), t.Description())
+		}
+		sb.WriteString("\n")
+	}
+	// ARGO.md 用户指令（不存在则跳过）
+	if data, err := os.ReadFile(argoHome() + "/ARGO.md"); err == nil {
+		sb.Write(data)
+		sb.WriteByte('\n')
+	}
 	return []pact.Message{{
 		Role:    pact.RoleSystem,
-		Content: codingBehaviorCore,
+		Content: sb.String(),
 	}}
 }
