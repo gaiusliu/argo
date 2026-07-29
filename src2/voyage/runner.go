@@ -29,7 +29,11 @@ func (v *Voyage) runSight() {
 		}
 	}
 	msgs := v.buildSystemPrompt()
-	msgs = append(msgs, v.msgs...)
+	for _, m := range v.msgs {
+		if m.Role != "ask" {
+			msgs = append(msgs, m)
+		}
+	}
 	for ev := range v.sight.Take(v.ctx, msgs) {
 		v.out <- ev
 		if ev.Type == pact.EventTypeToolUseStart {
@@ -122,13 +126,15 @@ func (v *Voyage) runCall() {
 			return
 		}
 		v.journalIndex = len(v.msgs)
-	}
-	// 持久化审批状态
-	_ = v.board.Seal(v.checkpoint)
-	// 持久化断点快照
-	if v.checkpoint != nil {
-		// TODO: 架构化存储 Voyage 状态
-		_ = v.checkpoint.Save("")
+		// 追加 ask 标记
+		askEntry, _ := json.Marshal(pact.Message{
+			Role:      "ask",
+			Omens:     v.askOmens,
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+		if err := v.journal.Append([]string{string(askEntry)}); err != nil {
+			slog.Error("journal ask", "error", err)
+		}
 	}
 	v.phase = PhaseDock
 }
@@ -149,10 +155,6 @@ func (v *Voyage) runDock() {
 		} else {
 			v.journalIndex = len(v.msgs)
 		}
-	}
-	if v.checkpoint != nil {
-		// TODO: 序列化 Voyage 状态
-		_ = v.checkpoint.Save("")
 	}
 	v.out <- pact.Event{Type: pact.EventTypeDone}
 }

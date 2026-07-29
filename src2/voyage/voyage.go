@@ -19,7 +19,6 @@ type Voyage struct {
 	sight        sight.Sight
 	board        *board.Board
 	journal      vault.Journal
-	checkpoint   vault.Checkpoint
 	deck         *deck.Deck
 	lore         *lore.Lore
 	omens        []pact.Omen
@@ -56,15 +55,14 @@ func New(ctx context.Context, cfg AgentCfg) (*Voyage, error) {
 	b := board.New(cfg.Board.Iron, cfg.Board.Cord)
 	dir := argoHome()
 	return &Voyage{
-		phase:      PhaseSight,
-		ctx:        ctx,
-		sight:      s,
-		board:      b,
-		journal:    vault.NewFileJournal(dir + "/journal.jsonl"),
-		checkpoint: vault.NewFileCheckpoint(dir + "/checkpoint.json"),
-		deck:       d,
-		lore:       l,
-		press:      p,
+		phase:   PhaseSight,
+		ctx:     ctx,
+		sight:   s,
+		board:   b,
+		journal: vault.NewFileJournal(dir + "/journal.jsonl"),
+		deck:    d,
+		lore:    l,
+		press:   p,
 	}, nil
 }
 
