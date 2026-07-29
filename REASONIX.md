@@ -14,4 +14,4 @@
 
 ## 架构规则
 
-- 参见 `docs/rules.md`：ServerCfg（进程级，绑定到 Server 结构体）与 AgentCfg（请求级，handler 内动态加载）的加载边界
+- 本项目必须遵守 `docs/rules.md` 中记录的所有规则，不可违反。具体规则内容在使用时按需加载。
