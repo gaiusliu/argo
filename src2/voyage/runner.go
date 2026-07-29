@@ -145,10 +145,8 @@ func (v *Voyage) buildSystemPrompt() []pact.Message {
 	var sb strings.Builder
 	sb.WriteString(codingBehaviorCore)
 	sb.WriteString("\n\n")
-	sb.WriteString("<env>\n")
-	fmt.Fprintf(&sb, "  Platform: %s\n", runtime.GOOS)
-	fmt.Fprintf(&sb, "  Today's date: %s\n", time.Now().Format("2006-01-02"))
-	sb.WriteString("</env>\n\n")
+	fmt.Fprintf(&sb, "Platform: %s\n", runtime.GOOS)
+	fmt.Fprintf(&sb, "Today's date: %s\n\n", time.Now().Format("2006-01-02"))
 	// 技能列表
 	if skills := v.lore.List(); len(skills) > 0 {
 		sb.WriteString("## Available Skills\n")
