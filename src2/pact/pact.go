@@ -133,12 +133,7 @@ type Hand struct {
 
 // ── 配置协议 ──
 
-// ConfigSource 配置源接口，每次请求调用 Load() 获取最新配置。
-type ConfigSource interface {
-	Load() (AgentCfg, error)
-}
-
-// AgentCfg 请求级配置，每次 handlePrompt 时通过 ConfigSource.Load() 热重载。
+// AgentCfg 请求级配置，每次 handlePrompt 时热重载。
 type AgentCfg struct {
 	Sight SightCfg `json:"sight"`
 	Press PressCfg `json:"press"`

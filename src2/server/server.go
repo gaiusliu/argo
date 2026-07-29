@@ -7,6 +7,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"argo/src2/deck"
+	"argo/src2/lore"
 	"argo/src2/pact"
 	"argo/src2/sight"
 )
@@ -29,8 +31,8 @@ func New(scfg pact.ServerCfg, client *http.Client) *Server {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		cfg, err := (&AgentConfigSource{Loader: cl}).Load()
-		if err != nil {
+		var cfg pact.AgentCfg
+		if err := cl.Load("agent.json", &cfg); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -41,7 +43,12 @@ func New(scfg pact.ServerCfg, client *http.Client) *Server {
 			return
 		}
 		_ = sight
-		_ = cfg
+		// 创建 deck、lore
+		d := deck.NewDeck(nil, nil) // TODO: 传入 builtin hands + clip
+		l := lore.New("", "")       // TODO: 传入用户/项目技能目录
+		_ = d
+		_ = l
+		// TODO: 创建 board、journal、voyage → SetSail → SSE
 		http.Error(w, "not implemented", http.StatusNotImplemented)
 	})
 	s.router = r

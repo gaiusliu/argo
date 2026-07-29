@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-
-	"argo/src2/pact"
 )
 
 // ConfigLoader 配置加载接口，未来可扩展为 DB/Redis 等实现。
@@ -37,19 +35,4 @@ func (f *FileConfigLoader) Load(name string, target any) error {
 		return err
 	}
 	return json.Unmarshal(data, target)
-}
-
-// AgentConfigSource 加载 AgentCfg，实现 pact.ConfigSource 接口。
-// 每次请求热重载 agent.json。
-type AgentConfigSource struct {
-	Loader ConfigLoader
-}
-
-// Load 实现 pact.ConfigSource。
-func (a *AgentConfigSource) Load() (pact.AgentCfg, error) {
-	var acfg pact.AgentCfg
-	if err := a.Loader.Load("agent.json", &acfg); err != nil {
-		return pact.AgentCfg{}, err
-	}
-	return acfg, nil
 }
