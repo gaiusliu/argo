@@ -3,7 +3,6 @@ package voyage
 import (
 	"context"
 	"net/http"
-	"os"
 
 	"argo/src2/board"
 	"argo/src2/deck"
@@ -43,12 +42,12 @@ func New(ctx context.Context, cfg pact.AgentCfg) (*Voyage, error) {
 		return nil, err
 	}
 	// TODO: 传入 builtin hands + clip
-	d := deck.NewDeck(nil, nil)
+	d := deck.New(nil, nil)
 	// TODO: 传入用户/项目技能目录
 	l := lore.New("", "")
 	// TODO: 传入规则
 	b := board.New(nil, nil)
-	dir, _ := os.MkdirTemp("", "argo-")
+	dir := argoHome()
 	return &Voyage{
 		phase:      PhaseSight,
 		ctx:        ctx,
