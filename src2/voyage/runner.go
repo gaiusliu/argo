@@ -115,7 +115,9 @@ func (v *Voyage) runCall() {
 			}
 			records = append(records, string(data))
 		}
-		_ = v.journal.Append(records)
+		if err := v.journal.Append(records); err != nil {
+			slog.Error("journal append", "error", err)
+		}
 	}
 	// 持久化审批状态
 	_ = v.board.Seal(v.checkpoint)
@@ -138,7 +140,9 @@ func (v *Voyage) runDock() {
 			}
 			records = append(records, string(data))
 		}
-		_ = v.journal.Append(records)
+		if err := v.journal.Append(records); err != nil {
+			slog.Error("journal append", "error", err)
+		}
 	}
 	if v.checkpoint != nil {
 		// TODO: 序列化 Voyage 状态
