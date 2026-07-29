@@ -12,15 +12,15 @@ import (
 )
 
 func main() {
-	fc, err := server.NewFileConfigLoader()
+	cl, err := server.NewFileConfigLoader()
 	if err != nil {
 		slog.Error("config init failed", "error", err)
 		os.Exit(1)
 	}
 
 	// 进程级：Server 配置（启动时加载一次）
-	scfg, err := (&serverConfigSource{fc}).Load()
-	if err != nil {
+	var scfg pact.ServerCfg
+	if err := cl.Load("server.json", &scfg); err != nil {
 		slog.Error("load server config", "error", err)
 		os.Exit(1)
 	}
