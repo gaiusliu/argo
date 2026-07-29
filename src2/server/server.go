@@ -15,13 +15,13 @@ import (
 
 // Server 请求级装配器，每 prompt 创建全新域模块实例。
 type Server struct {
-	scfg   pact.ServerCfg
+	scfg   ServerCfg
 	client *http.Client
 	router *chi.Mux
 }
 
 // New 创建装配器，初始化 chi router 并注册 /prompt 路由。
-func New(scfg pact.ServerCfg, client *http.Client) *Server {
+func New(scfg ServerCfg, client *http.Client) *Server {
 	s := &Server{scfg: scfg, client: client}
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)

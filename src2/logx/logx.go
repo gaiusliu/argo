@@ -9,9 +9,19 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"argo/src2/pact"
 )
+
+// LogCfg 日志配置。
+type LogCfg struct {
+	// Dir 日志目录
+	Dir string `json:"dir,omitempty"`
+	// Level 日志级别：debug / info / warn / error
+	Level string `json:"level,omitempty"`
+	// MaxSize 单文件大小上限（MB）
+	MaxSize int `json:"max_size,omitempty"`
+	// MaxAge 文件保留天数
+	MaxAge int `json:"max_age,omitempty"`
+}
 
 // LogWriter 日志写入器，支持按日期和大小自动轮转。
 type LogWriter struct {
@@ -27,7 +37,7 @@ type LogWriter struct {
 }
 
 // New 创建日志写入器：解析目录、创建目录、清理过期文件、打开当天日志。
-func New(cfg pact.LogCfg) (*LogWriter, error) {
+func New(cfg LogCfg) (*LogWriter, error) {
 	dir := cfg.Dir
 	if dir == "" {
 		dir = "./logs/"

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"argo/src2/logx"
 )
 
 // ConfigLoader 配置加载接口，未来可扩展为 DB/Redis 等实现。
@@ -35,4 +37,12 @@ func (f *FileConfigLoader) Load(name string, target any) error {
 		return err
 	}
 	return json.Unmarshal(data, target)
+}
+
+// ServerCfg 进程级配置，启动时加载一次，运行期不变。
+type ServerCfg struct {
+	// Addr 监听地址，如 ":8080"
+	Addr string `json:"addr"`
+	// Log 日志配置
+	Log logx.LogCfg `json:"log"`
 }

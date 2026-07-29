@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"argo/src2/logx"
-	"argo/src2/pact"
 	"argo/src2/server"
 )
 
@@ -19,7 +18,7 @@ func main() {
 	}
 
 	// 进程级：Server 配置（启动时加载一次）
-	var scfg pact.ServerCfg
+	var scfg server.ServerCfg
 	if err := cl.Load("server.json", &scfg); err != nil {
 		slog.Error("load server config", "error", err)
 		os.Exit(1)
@@ -37,7 +36,7 @@ func main() {
 	}
 }
 
-func initLog(scfg pact.ServerCfg) *logx.LogWriter {
+func initLog(scfg server.ServerCfg) *logx.LogWriter {
 	w, err := logx.New(scfg.Log)
 	if err != nil {
 		slog.Error("log init failed", "error", err)
