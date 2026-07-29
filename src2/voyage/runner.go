@@ -46,14 +46,26 @@ func (v *Voyage) runSight(out chan<- pact.Event) {
 }
 
 func (v *Voyage) runRead(out chan<- pact.Event) {
-	for _, o := range v.omens {
-		action, _ := v.board.Read(o)
-		if action == board.ActionAsk {
-			v.phase = PhaseCall
-			return
+	v.askOmens = nil
+	hasPass := false
+	for i := range v.omens {
+		o := &v.omens[i]
+		switch action, _ := v.board.Read(*o); action {
+		case board.ActionApprove:
+			hasPass = true
+		case board.ActionDeny:
+			o.Verdict = pact.VerdictDeny
+		default:
+			v.askOmens = append(v.askOmens, *o)
 		}
 	}
-	v.phase = PhaseHeave
+	if len(v.askOmens) > 0 {
+		v.phase = PhaseCall
+	} else if hasPass {
+		v.phase = PhaseHeave
+	} else {
+		v.phase = PhaseSight
+	}
 }
 
 func (v *Voyage) runHeave(out chan<- pact.Event) {
@@ -80,8 +92,29 @@ func (v *Voyage) runHeave(out chan<- pact.Event) {
 			o.Result = result
 		}
 	}
-	v.omens = nil
 	v.phase = PhaseSight
+}
+
+func (v *Voyage) runCall(out chan<- pact.Event) {
+	out <- pact.Event{
+		Type:  pact.EventTypeAsk,
+		Omens: v.askOmens,
+	}
+	// 持久化对话记录
+	if v.journal != nil {
+		var records []string
+		for _, m := range v.msgs {
+			records = append(records, m.Content)
+		}
+		_ = v.journal.Append(records)
+	}
+	// 持久化审批状态
+	_ = v.board.Seal(v.checkpoint)
+	// 持久化断点快照
+	if v.checkpoint != nil {
+		_ = v.checkpoint.Save("") // TODO: 序列化 Voyage 状态
+	}
+	v.phase = PhaseDock
 }
 
 func (v *Voyage) runDock(out chan<- pact.Event) {

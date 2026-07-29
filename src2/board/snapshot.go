@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"argo/src2/pact"
+	"argo/src2/vault"
 )
 
 // Entries 导出所有船长许可记录，供 Seal 持久化使用。
@@ -27,16 +28,20 @@ func (b *Board) Entries() []AyeEntry {
 }
 
 // Seal 将当前审批记录持久化到快照。
-func (b *Board) Seal() error {
+func (b *Board) Seal(cp vault.Checkpoint) error {
 	data, err := json.Marshal(b.Entries())
 	if err != nil {
 		return fmt.Errorf("seal approvals: %w", err)
 	}
-	return b.cp.Save(string(data))
+	return cp.Save(string(data))
 }
 
 // Recall 从快照数据恢复审批记录。
-func (b *Board) Recall(data string) error {
+func (b *Board) Recall(cp vault.Checkpoint) error {
+	data, err := cp.Load()
+	if err != nil {
+		return err
+	}
 	if data == "" {
 		return nil
 	}

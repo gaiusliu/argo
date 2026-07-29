@@ -3,7 +3,6 @@ package main
 
 import (
 	"log/slog"
-	"net/http"
 	"os"
 
 	"argo/src2/logx"
@@ -26,8 +25,7 @@ func main() {
 	logWriter := initLog(scfg)
 	defer logWriter.Close()
 
-	client := &http.Client{}
-	srv := server.New(scfg, client)
+	srv := server.New(scfg)
 
 	slog.Info("argod starting", "addr", scfg.Addr)
 	if err := srv.ListenAndServe(); err != nil {

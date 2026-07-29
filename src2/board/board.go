@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"argo/src2/pact"
-	"argo/src2/vault"
 )
 
 // 审核动作：ActionApprove 放行 / ActionAsk 确认 / ActionDeny 拒绝。
@@ -41,21 +40,19 @@ type AyeEntry struct {
 	Pattern string
 }
 
-// Board 审批引擎，存储铁律/绳索规则、船长许可记录和持久化快照。
+// Board 审批引擎，存储铁律/绳索规则、船长许可记录。
 type Board struct {
 	iron, cord []Rule
 	aye        map[string]struct{}
 	mu         sync.RWMutex
-	cp         vault.Checkpoint
 }
 
-// New 创建审批引擎。iron/cord 分别为铁律/绳索规则，cp 用于持久化审批记录。
-func New(iron, cord []Rule, cp vault.Checkpoint) *Board {
+// New 创建审批引擎。iron/cord 分别为铁律/绳索规则。
+func New(iron, cord []Rule) *Board {
 	return &Board{
 		iron: iron,
 		cord: cord,
 		aye:  make(map[string]struct{}),
-		cp:   cp,
 	}
 }
 
