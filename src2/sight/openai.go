@@ -101,7 +101,11 @@ func (o *openAI) streamSSE(ctx context.Context, respBody io.Reader, out chan<- p
 			ss.flush(out)
 			return
 		}
-		events, _ := ss.handleChunk([]byte(data))
+		events, err := ss.handleChunk([]byte(data))
+		if err != nil {
+			out <- pact.Event{Type: pact.EventTypeError, Err: err}
+			return
+		}
 		for _, ev := range events {
 			out <- ev
 		}
@@ -186,9 +190,17 @@ func (o *openAI) doChat(ctx context.Context, req apiReq) <-chan pact.Event {
 	out := make(chan pact.Event, 16)
 	go func() {
 		defer close(out)
-		body, _ := json.Marshal(req)
-		httpReq, _ := http.NewRequestWithContext(ctx, "POST",
+		body, err := json.Marshal(req)
+		if err != nil {
+			out <- pact.Event{Type: pact.EventTypeError, Err: err}
+			return
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, "POST",
 			o.baseURL+"/v1/chat/completions", bytes.NewReader(body))
+		if err != nil {
+			out <- pact.Event{Type: pact.EventTypeError, Err: err}
+			return
+		}
 		httpReq.Header.Set("Authorization", "Bearer "+o.key)
 		httpReq.Header.Set("Content-Type", "application/json")
 		resp, err := o.client.Do(httpReq)
