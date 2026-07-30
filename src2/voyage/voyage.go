@@ -2,6 +2,8 @@ package voyage
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"argo/src2/board"
@@ -65,51 +67,53 @@ func New(ctx context.Context, cfg AgentCfg) (*Voyage, error) {
 	}, nil
 }
 
-// SetMessages 设置对话历史，并自动检测是否需要恢复待审批会话。
-func (v *Voyage) SetMessages(msgs []pact.Message) {
-	v.msgs = msgs
-	if len(msgs) == 0 {
-		v.phase = PhaseSight
-		return
-	}
-	last := msgs[len(msgs)-1]
-	if last.Role != pact.RoleAssistant {
-		v.phase = PhaseSight
-		return
-	}
-	for _, o := range last.Omens {
-		if o.Verdict == pact.VerdictAsk {
-			v.omens = last.Omens
-			v.phase = PhaseCall
-			return
-		}
-	}
-	v.phase = PhaseSight
+// AppendUserMessage 追加用户消息到对话历史。
+func (v *Voyage) AppendUserMessage(prompt string) {
+	v.msgs = append(v.msgs, pact.Message{Role: pact.RoleUser, Content: prompt})
 }
 
-// Resume 恢复待审批会话，根据用户审批结果更新 Omens 和 Board。
-// decisions 的 key 为 Omen.ID，value 为 true 表示批准。
-func (v *Voyage) Resume(decisions map[string]bool) {
+// Resume 恢复待审批会话，从最后一条 assistant 消息恢复 omens 并更新 verdict。
+// decisions 的 key 为 Omen.ID，value 取值见 pact.VerdictApprove / pact.VerdictDeny。
+func (v *Voyage) Resume(decisions map[string]int) error {
+	if len(v.msgs) == 0 {
+		return fmt.Errorf("resume: no message history")
+	}
+	last := v.msgs[len(v.msgs)-1]
+	if last.Role != pact.RoleAssistant || len(last.Omens) == 0 {
+		return fmt.Errorf("resume: last message is not assistant with omens")
+	}
+	v.omens = last.Omens
 	for i := range v.omens {
 		o := &v.omens[i]
-		approved, ok := decisions[o.ID]
+		verdict, ok := decisions[o.ID]
 		if !ok {
 			continue
 		}
-		if approved {
-			o.Verdict = pact.VerdictAllow
+		o.Verdict = verdict
+		if verdict == pact.VerdictApprove {
 			v.board.Pass(*o)
-		} else {
-			o.Verdict = pact.VerdictDeny
 		}
 	}
-	for _, o := range v.omens {
-		if o.Verdict == pact.VerdictAllow {
-			v.phase = PhaseHeave
-			return
-		}
+	v.phase = PhaseSteer
+	return nil
+}
+
+// LoadMessages 从 journal 加载历史消息并赋值给 v.msgs。
+func (v *Voyage) LoadMessages() error {
+	lines, err := v.journal.Scan()
+	if err != nil {
+		return err
 	}
-	v.phase = PhaseSight
+	var msgs []pact.Message
+	for _, line := range lines {
+		var m pact.Message
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			continue
+		}
+		msgs = append(msgs, m)
+	}
+	v.msgs = msgs
+	return nil
 }
 
 // SetSail 扬帆起航，启动六态自驱动循环，返回流式事件 channel。

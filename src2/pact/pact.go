@@ -16,7 +16,7 @@ type Omen struct {
 	Result string
 	// Status 执行状态，取值见 StatusPending / StatusSuccess / StatusError 常量
 	Status int
-	// Verdict 审核结果，取值见 VerdictAllow / VerdictDeny 常量
+	// Verdict 审核结果，取值见 VerdictApprove / VerdictDeny / VerdictAsk 常量
 	Verdict int
 	// VerdictReason 审核/驳回理由
 	VerdictReason string
@@ -34,8 +34,8 @@ const (
 
 // Omen 审核结果常量
 const (
-	// VerdictAllow 放行
-	VerdictAllow = iota + 1
+	// VerdictApprove 批准
+	VerdictApprove = iota + 1
 	// VerdictDeny 拒绝
 	VerdictDeny
 	// VerdictAsk 等待用户审批

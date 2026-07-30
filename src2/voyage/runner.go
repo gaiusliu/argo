@@ -54,12 +54,12 @@ func (v *Voyage) runRead() {
 	needsAsking := false
 	for i := range v.omens {
 		o := &v.omens[i]
-		if o.Verdict == pact.VerdictAllow || o.Verdict == pact.VerdictDeny {
+		if o.Verdict == pact.VerdictApprove || o.Verdict == pact.VerdictDeny {
 			continue
 		}
 		switch action, _ := v.board.Read(*o); action {
 		case board.ActionApprove:
-			o.Verdict = pact.VerdictAllow
+			o.Verdict = pact.VerdictApprove
 			hasApproved = true
 		case board.ActionDeny:
 			o.Verdict = pact.VerdictDeny
@@ -80,7 +80,7 @@ func (v *Voyage) runRead() {
 func (v *Voyage) runHeave() {
 	for i := range v.omens {
 		o := &v.omens[i]
-		if o.Verdict != pact.VerdictAllow {
+		if o.Verdict != pact.VerdictApprove {
 			continue
 		}
 		hand, ok := v.deck.Lookup(o.Name)
@@ -121,7 +121,7 @@ func (v *Voyage) runSteer() {
 	}
 	// Resume 后进入：根据审批结果决定下一阶段
 	for _, o := range v.omens {
-		if o.Verdict == pact.VerdictAllow {
+		if o.Verdict == pact.VerdictApprove {
 			v.phase = PhaseHeave
 			return
 		}
