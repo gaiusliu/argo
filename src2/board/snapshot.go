@@ -3,6 +3,7 @@ package board
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"argo/src2/pact"
 	"argo/src2/vault"
@@ -16,7 +17,7 @@ func (b *Board) Entries() []AyeEntry {
 	for key := range b.aye {
 		hand, pattern, err := splitScopeKey(key)
 		if err != nil {
-			// TODO：记录日志
+			slog.Warn("split scope key failed", "key", key, "error", err)
 			continue
 		}
 		result = append(result, AyeEntry{

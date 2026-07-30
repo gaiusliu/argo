@@ -47,7 +47,7 @@ func (b *builtinTool) Source() string                   { return "builtin" }
 // Haul 调用 handler 执行工具。
 func (b *builtinTool) Haul(params map[string]any) (string, error) {
 	if b.handler == nil {
-		return "stub: " + b.name + " executed", nil
+		return "", fmt.Errorf("builtin %q: no handler", b.name)
 	}
 	return b.handler(context.Background(), params)
 }
@@ -212,7 +212,7 @@ func grepHandler(ctx context.Context, params map[string]any) (string, error) {
 	limit := toInt(params["limit"], 200)
 	var buf strings.Builder
 	found := 0
-	filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
+	err = filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}

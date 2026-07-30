@@ -38,6 +38,8 @@ const (
 	VerdictAllow = iota + 1
 	// VerdictDeny 拒绝
 	VerdictDeny
+	// VerdictAsk 等待用户审批
+	VerdictAsk
 )
 
 // Message 角色常量

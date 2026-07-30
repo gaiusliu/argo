@@ -3,6 +3,7 @@ package lore
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 )
@@ -95,7 +96,7 @@ func (l *Lore) loadDir(notes map[string]Note, dir string) error {
 	for _, p := range paths {
 		note, err := loadNote(p)
 		if err != nil {
-			// TODO：记录日志
+			slog.Warn("load note failed", "path", p, "error", err)
 			continue
 		}
 		notes[note.Name] = note

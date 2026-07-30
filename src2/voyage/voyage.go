@@ -13,7 +13,7 @@ import (
 	"argo/src2/vault"
 )
 
-// Voyage 一次航程，持有所有域模块实例，自驱动执行五态循环。
+// Voyage 一次航程，持有所有域模块实例，自驱动执行六态循环。
 type Voyage struct {
 	phase        int
 	sight        sight.Sight
@@ -22,7 +22,6 @@ type Voyage struct {
 	deck         *deck.Deck
 	lore         *lore.Lore
 	omens        []pact.Omen
-	askOmens     []pact.Omen
 	press        press.Press
 	tokenUsage   pact.TokenUsage
 	msgs         []pact.Message
@@ -66,12 +65,54 @@ func New(ctx context.Context, cfg AgentCfg) (*Voyage, error) {
 	}, nil
 }
 
-// SetMessages 设置对话历史，供 sight.Take 使用。
+// SetMessages 设置对话历史，并自动检测是否需要恢复待审批会话。
 func (v *Voyage) SetMessages(msgs []pact.Message) {
 	v.msgs = msgs
+	if len(msgs) == 0 {
+		v.phase = PhaseSight
+		return
+	}
+	last := msgs[len(msgs)-1]
+	if last.Role != pact.RoleAssistant {
+		v.phase = PhaseSight
+		return
+	}
+	for _, o := range last.Omens {
+		if o.Verdict == pact.VerdictAsk {
+			v.omens = last.Omens
+			v.phase = PhaseCall
+			return
+		}
+	}
+	v.phase = PhaseSight
 }
 
-// SetSail 扬帆起航，启动五态自驱动循环，返回流式事件 channel。
+// Resume 恢复待审批会话，根据用户审批结果更新 Omens 和 Board。
+// decisions 的 key 为 Omen.ID，value 为 true 表示批准。
+func (v *Voyage) Resume(decisions map[string]bool) {
+	for i := range v.omens {
+		o := &v.omens[i]
+		approved, ok := decisions[o.ID]
+		if !ok {
+			continue
+		}
+		if approved {
+			o.Verdict = pact.VerdictAllow
+			v.board.Pass(*o)
+		} else {
+			o.Verdict = pact.VerdictDeny
+		}
+	}
+	for _, o := range v.omens {
+		if o.Verdict == pact.VerdictAllow {
+			v.phase = PhaseHeave
+			return
+		}
+	}
+	v.phase = PhaseSight
+}
+
+// SetSail 扬帆起航，启动六态自驱动循环，返回流式事件 channel。
 func (v *Voyage) SetSail() <-chan pact.Event {
 	out := make(chan pact.Event, 8)
 	v.out = out
@@ -83,8 +124,11 @@ func (v *Voyage) SetSail() <-chan pact.Event {
 				v.runSight()
 			case PhaseRead:
 				v.runRead()
+			case PhaseSteer:
+				v.runSteer()
 			case PhaseCall:
 				v.runCall()
+				return
 			case PhaseHeave:
 				v.runHeave()
 			case PhaseDock:

@@ -29,11 +29,7 @@ func (v *Voyage) runSight() {
 		}
 	}
 	msgs := v.buildSystemPrompt()
-	for _, m := range v.msgs {
-		if m.Role != "ask" {
-			msgs = append(msgs, m)
-		}
-	}
+	msgs = append(msgs, v.msgs...)
 	for ev := range v.sight.Take(v.ctx, msgs) {
 		v.out <- ev
 		if ev.Type == pact.EventTypeToolUseStart {
@@ -54,22 +50,27 @@ func (v *Voyage) runSight() {
 }
 
 func (v *Voyage) runRead() {
-	v.askOmens = nil
-	hasPass := false
+	hasApproved := false
+	needsAsking := false
 	for i := range v.omens {
 		o := &v.omens[i]
+		if o.Verdict == pact.VerdictAllow || o.Verdict == pact.VerdictDeny {
+			continue
+		}
 		switch action, _ := v.board.Read(*o); action {
 		case board.ActionApprove:
-			hasPass = true
+			o.Verdict = pact.VerdictAllow
+			hasApproved = true
 		case board.ActionDeny:
 			o.Verdict = pact.VerdictDeny
 		default:
-			v.askOmens = append(v.askOmens, *o)
+			o.Verdict = pact.VerdictAsk
+			needsAsking = true
 		}
 	}
-	if len(v.askOmens) > 0 {
-		v.phase = PhaseCall
-	} else if hasPass {
+	if needsAsking {
+		v.phase = PhaseSteer
+	} else if hasApproved {
 		v.phase = PhaseHeave
 	} else {
 		v.phase = PhaseSight
@@ -79,6 +80,9 @@ func (v *Voyage) runRead() {
 func (v *Voyage) runHeave() {
 	for i := range v.omens {
 		o := &v.omens[i]
+		if o.Verdict != pact.VerdictAllow {
+			continue
+		}
 		hand, ok := v.deck.Lookup(o.Name)
 		if !ok {
 			o.Status = pact.StatusError
@@ -103,12 +107,30 @@ func (v *Voyage) runHeave() {
 	v.phase = PhaseSight
 }
 
-func (v *Voyage) runCall() {
-	v.out <- pact.Event{
-		Type:  pact.EventTypeAsk,
-		Omens: v.askOmens,
+func (v *Voyage) runSteer() {
+	needsAsking := false
+	for _, o := range v.omens {
+		if o.Verdict == pact.VerdictAsk {
+			needsAsking = true
+			break
+		}
 	}
-	// 持久化对话记录
+	if needsAsking {
+		v.phase = PhaseCall
+		return
+	}
+	// Resume 后进入：根据审批结果决定下一阶段
+	for _, o := range v.omens {
+		if o.Verdict == pact.VerdictAllow {
+			v.phase = PhaseHeave
+			return
+		}
+	}
+	v.phase = PhaseSight
+}
+
+// runCall 呼叫船长：持久化 journal 并发送 EventTypeAsk。
+func (v *Voyage) runCall() {
 	if v.journal != nil && v.journalIndex < len(v.msgs) {
 		var records []string
 		for _, m := range v.msgs[v.journalIndex:] {
@@ -122,21 +144,12 @@ func (v *Voyage) runCall() {
 		if err := v.journal.Append(records); err != nil {
 			slog.Error("journal append", "error", err)
 			v.out <- pact.Event{Type: pact.EventTypeError, Err: err}
-			v.phase = PhaseDock
-			return
-		}
-		v.journalIndex = len(v.msgs)
-		// 追加 ask 标记
-		askEntry, _ := json.Marshal(pact.Message{
-			Role:      "ask",
-			Omens:     v.askOmens,
-			Timestamp: time.Now().Format(time.RFC3339),
-		})
-		if err := v.journal.Append([]string{string(askEntry)}); err != nil {
-			slog.Error("journal ask", "error", err)
 		}
 	}
-	v.phase = PhaseDock
+	v.out <- pact.Event{
+		Type:  pact.EventTypeAsk,
+		Omens: v.omens,
+	}
 }
 
 func (v *Voyage) runDock() {
