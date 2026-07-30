@@ -30,8 +30,12 @@ func (v *Voyage) runSight() {
 	}
 	msgs := v.buildSystemPrompt()
 	msgs = append(msgs, v.msgs...)
+	var content strings.Builder
 	for ev := range v.sight.Take(v.ctx, msgs) {
 		v.out <- ev
+		if ev.Type == pact.EventTypeTextDelta {
+			content.WriteString(ev.Delta)
+		}
 		if ev.Type == pact.EventTypeToolUseStart {
 			v.omens = append(v.omens, ev.Omens...)
 		}
@@ -42,6 +46,13 @@ func (v *Voyage) runSight() {
 			break
 		}
 	}
+	v.msgs = append(v.msgs, pact.Message{
+		Role:      pact.RoleAssistant,
+		Content:   content.String(),
+		Omens:     v.omens,
+		Model:     v.sight.Name(),
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
 	if len(v.omens) > 0 {
 		v.phase = PhaseRead
 	} else {

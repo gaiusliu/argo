@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"argo/src2/board"
 	"argo/src2/deck"
@@ -69,7 +70,11 @@ func New(ctx context.Context, cfg AgentCfg) (*Voyage, error) {
 
 // AppendUserMessage 追加用户消息到对话历史。
 func (v *Voyage) AppendUserMessage(prompt string) {
-	v.msgs = append(v.msgs, pact.Message{Role: pact.RoleUser, Content: prompt})
+	v.msgs = append(v.msgs, pact.Message{
+		Role:      pact.RoleUser,
+		Content:   prompt,
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
 }
 
 // Resume 恢复待审批会话，从最后一条 assistant 消息恢复 omens 并更新 verdict。

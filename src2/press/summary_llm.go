@@ -3,6 +3,7 @@ package press
 import (
 	"context"
 	"strings"
+	"time"
 
 	"argo/src2/pact"
 	"argo/src2/sight"
@@ -45,8 +46,16 @@ func (c *llmSummary) Press(ctx context.Context, messages []pact.Message, inputTo
 
 	// 构造压缩请求：system 模板 + user（待压缩消息序列化）
 	compactMsgs := []pact.Message{
-		{Role: pact.RoleSystem, Content: summaryTemplate},
-		{Role: pact.RoleUser, Content: serialize(messages[from:to])},
+		{
+			Role:      pact.RoleSystem,
+			Content:   summaryTemplate,
+			Timestamp: time.Now().Format(time.RFC3339),
+		},
+		{
+			Role:      pact.RoleUser,
+			Content:   serialize(messages[from:to]),
+			Timestamp: time.Now().Format(time.RFC3339),
+		},
 	}
 	events := c.sight.Take(ctx, compactMsgs)
 
