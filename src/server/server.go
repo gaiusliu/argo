@@ -1,150 +1,233 @@
+// Package server 请求级装配层，创建各域模块实例并注入 Voyage。
 package server
 
 import (
 	"encoding/json"
-	"log/slog"
+	"fmt"
 	"net/http"
-
-	"argo/src/knot"
-	"argo/src/voyage"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
+	"argo/src/pact"
+	"argo/src/voyage"
 )
 
-// Server Argo HTTP 后端，无状态路由分发。
-// 每次请求自行从磁盘加载状态，结束后持久化。
+// PromptRequest /prompt 请求体。
+// 新对话传 prompt，审批请求传 decisions。
+type PromptRequest struct {
+	VoyageID  string         `json:"voyageID"`
+	Prompt    string         `json:"prompt,omitempty"`
+	Decisions map[string]int `json:"decisions,omitempty"`
+}
+
+// Server 请求级装配器，每 prompt 创建全新域模块实例。
 type Server struct {
-	argoDir  string
-	addr     string
-	certFile string
-	keyFile  string
-	router   *chi.Mux
+	scfg   ServerCfg
+	router *chi.Mux
 }
 
-// Config Server 启动配置。
-type Config struct {
-	Addr     string
-	CertFile string
-	KeyFile  string
-	WorkDir  string
-}
-
-// New 创建 Server 实例，注册 chi 路由。
-func New(cfg Config) *Server {
-	s := &Server{
-		argoDir:  knot.ArgoDir(),
-		addr:     cfg.Addr,
-		certFile: cfg.CertFile,
-		keyFile:  cfg.KeyFile,
-	}
-
+// New 创建装配器，初始化 chi router 并注册 /prompt 路由。
+func New(scfg ServerCfg) *Server {
+	s := &Server{scfg: scfg}
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
-
-	r.Post("/session/new", s.handleNewSession)
-	r.Post("/session/prompt", s.handlePrompt)
-	r.Post("/session/resume", s.handleResumeSession)
-	r.Get("/session/list", s.handleListSessions)
-	r.Post("/session/delete", s.handleDeleteSession)
-	r.Post("/session/interrupt", s.handleInterrupt)
-
+	r.Post("/prompt", s.handlePrompt)
+	r.Post("/voyage/new", s.handleVoyageNew)
+	r.Get("/voyage/list", s.handleVoyageList)
+	r.Post("/voyage/resume", s.handleVoyageResume)
+	r.Post("/voyage/delete", s.handleVoyageDelete)
+	r.Post("/voyage/interrupt", s.handleVoyageInterrupt)
+	r.Post("/voyage/rename", s.handleVoyageRename)
 	s.router = r
 	return s
 }
 
-// ListenAndServe 启动 HTTP server，支持可选的 TLS。
-func (s *Server) ListenAndServe() error {
-	if s.certFile != "" && s.keyFile != "" {
-		return http.ListenAndServeTLS(s.addr, s.certFile, s.keyFile, s.router)
-	}
-	return http.ListenAndServe(s.addr, s.router)
-}
-
-// ---- Session CRUD handlers ----
-
-func (s *Server) handleNewSession(w http.ResponseWriter, r *http.Request) {
-	var req NewSessionRequest
+// handlePrompt 处理单次 prompt/审批请求：加载配置 → 装配 Voyage → SSE 输出。
+func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
+	var req PromptRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid req", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	slog.Info("handling new session", "req", req)
-
-	v, err := voyage.New(s.argoDir, req.CWD)
+	if req.VoyageID == "" {
+		http.Error(w, "voyageID is required", http.StatusBadRequest)
+		return
+	}
+	if req.Prompt == "" && len(req.Decisions) == 0 {
+		http.Error(w, "prompt or decisions is required", http.StatusBadRequest)
+		return
+	}
+	cl, err := NewFileConfigLoader()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	respondJSON(w, http.StatusOK, NewSessionResponse{SessionID: v.ID()})
-}
-
-func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	infos, err := voyage.List(knot.ArgoDir())
+	var cfg voyage.AgentCfg
+	if err := cl.Load("agent.json", &cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	v, err := voyage.New(r.Context(), cfg, req.VoyageID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	sessionInfos := make([]SessionInfoJSON, 0, len(infos))
-	for _, info := range infos {
-		sessionInfos = append(sessionInfos, ToSessionInfoJSON(info))
-	}
-	respondJSON(w, http.StatusOK, ListSessionsResponse{SessionInfos: sessionInfos})
-}
-
-func (s *Server) handleResumeSession(w http.ResponseWriter, r *http.Request) {
-	var body ResumeSessionRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
-		return
-	}
-
-	v, err := voyage.Resume(body.SessionID)
-	if err != nil {
-		http.Error(w, "session not found", http.StatusNotFound)
-		return
-	}
-
-	msgs, err := v.Vault.Load()
-	if err != nil {
-		http.Error(w, "load messages: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	respondJSON(w, http.StatusOK, ResumeSessionResponse{
-		SessionInfo: ToSessionInfoJSON(v.Info),
-		Messages:    msgs,
-	})
-}
-
-func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
-	var body DeleteSessionRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
-		return
-	}
-
-	if err := voyage.Delete(knot.ArgoDir(), body.SessionID); err != nil {
+	if err := v.LoadMessages(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	respondJSON(w, http.StatusOK, DeleteSessionResponse{})
+	if len(req.Decisions) > 0 {
+		if err := v.Resume(req.Decisions); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else {
+		v.AppendUserMessage(req.Prompt)
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, _ := w.(http.Flusher)
+	for ev := range v.SetSail() {
+		data, _ := json.Marshal(ev)
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, data)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
 }
 
-// handleInterrupt 删除控制流状态文件，用于 Asking 阶段终止。
-// state.json 可能不存在（非 Asking 阶段），忽略即可。
-func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
-	var body InterruptRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
+// ListenAndServe 启动 HTTP 服务。
+func (s *Server) ListenAndServe() error {
+	return http.ListenAndServe(s.scfg.Addr, s.router)
+}
+
+// ── Voyage CRUD ──
+
+type voyageNewResponse struct {
+	VoyageID string `json:"voyageID"`
+}
+
+func (s *Server) handleVoyageNew(w http.ResponseWriter, r *http.Request) {
+	id := voyage.NewVoyageID()
+	if err := voyage.InitVoyageInfo(id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	respondJSON(w, http.StatusOK, voyageNewResponse{VoyageID: id})
+}
 
-	voyage.DeleteState(body.SessionID)
+func (s *Server) handleVoyageList(w http.ResponseWriter, r *http.Request) {
+	infos, err := voyage.ListVoyages()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	respondJSON(w, http.StatusOK, infos)
+}
+
+type voyageResumeRequest struct {
+	VoyageID string `json:"voyageID"`
+}
+
+type voyageResumeResponse struct {
+	Info     voyage.VoyageInfo `json:"info"`
+	Messages []pact.Message    `json:"messages"`
+}
+
+func (s *Server) handleVoyageResume(w http.ResponseWriter, r *http.Request) {
+	var req voyageResumeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cl, err := NewFileConfigLoader()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var cfg voyage.AgentCfg
+	if err := cl.Load("agent.json", &cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	v, err := voyage.New(r.Context(), cfg, req.VoyageID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := v.LoadMessages(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	respondJSON(w, http.StatusOK, voyageResumeResponse{Info: v.Info, Messages: v.Messages()})
+}
+
+type voyageDeleteRequest struct {
+	VoyageID string `json:"voyageID"`
+}
+
+func (s *Server) handleVoyageDelete(w http.ResponseWriter, r *http.Request) {
+	var req voyageDeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := voyage.DeleteVoyage(req.VoyageID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+type voyageInterruptRequest struct {
+	VoyageID string `json:"voyageID"`
+}
+
+func (s *Server) handleVoyageInterrupt(w http.ResponseWriter, r *http.Request) {
+	var req voyageInterruptRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cl, err := NewFileConfigLoader()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var cfg voyage.AgentCfg
+	if err := cl.Load("agent.json", &cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	v, err := voyage.New(r.Context(), cfg, req.VoyageID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := v.CancelAsking(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+type voyageRenameRequest struct {
+	VoyageID string `json:"voyageID"`
+	Name     string `json:"name"`
+}
+
+func (s *Server) handleVoyageRename(w http.ResponseWriter, r *http.Request) {
+	var req voyageRenameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := voyage.RenameVoyage(req.VoyageID, req.Name); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
