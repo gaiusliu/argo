@@ -15,3 +15,14 @@
 ## 架构规则
 
 - 本项目必须遵守 `docs/rules.md` 中记录的所有规则，不可违反。具体规则内容在使用时按需加载。
+
+## 参考项目
+
+| 项目 | 本地路径 | 语言 | 说明 |
+|------|----------|------|------|
+| Reasonix | `code/DeepSeek-Reasonix/` | Go | AI coding agent，核心逻辑在 `internal/`、`desktop/`、`cmd/reasonix/` |
+| pi | `code/pi/` | TypeScript | AI coding agent，核心逻辑在 `packages/coding-agent/src/core/` |
+| opencode | `code/opencode/` | TypeScript | SST 开源的 AI coding agent（Effect monorepo），核心逻辑在 `packages/core/src/` |
+| oh-my-pi | `code/oh-my-pi/` | Rust + TypeScript | AI coding agent，核心逻辑在 `packages/coding-agent/src/`、`crates/` |
+
+可通过 `projectPath` 参数跨项目查询 CodeGraph。
